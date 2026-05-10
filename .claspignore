@@ -1,0 +1,32 @@
+# Keep clasp uploads limited to Apps Script source files.
+# Current .clasp.json uses "rootDir": "src", but this file protects the project
+# if rootDir is changed later.
+
+**/.git/**
+**/.github/**
+**/node_modules/**
+**/docs/**
+**/scripts/**
+**/tests/**
+**/migrations/**
+
+**/.env
+**/.env.*
+**/.clasp.json
+**/.clasprc.json
+**/.clasprc.json*
+
+**/*service-account*.json
+**/*firebase-adminsdk*.json
+**/*.pem
+**/*.key
+**/*.p12
+**/*.secret
+**/*.secret.*
+
+README.md
+CLASP.md
+docs/**
+scripts/**
+tests/**
+migrations/**

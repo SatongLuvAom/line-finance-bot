@@ -1,0 +1,35 @@
+# Local clasp/auth files
+.clasp.json
+.clasprc.json
+.clasprc.json*
+
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+*.secret
+*.secret.*
+secrets/
+credentials/
+service-account*.json
+*service-account*.json
+*firebase-adminsdk*.json
+firebase-private-key*.json
+*.pem
+*.key
+*.p12
+
+# Dependencies and generated outputs
+node_modules/
+dist/
+build/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

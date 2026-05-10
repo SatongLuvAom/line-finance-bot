@@ -1,0 +1,367 @@
+/**
+ * Config.gs
+ * ค่าคงที่ของระบบ และตัวช่วยอ่าน Script Properties
+ */
+
+const LABOR_CATEGORY_NAME = "ค่าแรง";
+
+const GEMINI_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-3-flash-preview"
+];
+
+const EXPENSE_CATEGORY_OPTIONS = [
+  "ค่าแรง",
+  "วัสดุโครงสร้าง",
+  "วัสดุตกแต่ง",
+  "งานพิมพ์/กราฟิก",
+  "ค่าขนส่ง",
+  "ค่าเช่าอุปกรณ์",
+  "ค่าสาธารณูปโภค",
+  "ค่าใช้จ่ายสำนักงาน",
+  "ภาษี/VAT",
+  "อื่นๆ"
+];
+
+const INCOME_CATEGORY_OPTIONS = [
+  "ค่าผลิตบูธ",
+  "ค่าออกแบบ",
+  "ค่าติดตั้ง",
+  "ค่าขนส่ง",
+  "เงินมัดจำ",
+  "ค่างวดงาน",
+  "อื่นๆ"
+];
+
+const EXPENSE_SHEET_HEADERS = [
+  "type",
+  "date",
+  "merchant",
+  "category",
+  "job",
+  "amount",
+  "items",
+  "note",
+  "laborWeek",
+  "laborMonth",
+  "attachmentUrl",
+  "attachmentPath",
+  "attachmentMimeType",
+  "source",
+  "status",
+  "createdByLineUserId",
+  "createdByDisplayName",
+  "createdFromLineMessageId",
+  "storageUrl",
+  "storagePath",
+  "ocrRawText",
+  "ocrConfidence",
+  "duplicateStatus",
+  "possibleDuplicateIds",
+  "sheetSyncStatus",
+  "sheetSyncError",
+  "parsedAt",
+  "normalizedAt"
+];
+
+const DEFAULT_OWN_COMPANY_HINTS = [
+  "yuppie",
+  "ยัพพี",
+  "บริษัท ยัพพี"
+];
+
+const DEFAULT_JOB_ALIASES = [
+  {
+    canonical: "โรงงาน",
+    aliases: [
+      "Factory",
+      "factory",
+      "โรงงานยัพพี",
+      "ส่วนกลางโรงงาน",
+      "ค่าใช้จ่ายโรงงาน",
+      "ค่าใช้จ่ายกลางโรงงาน"
+    ]
+  }
+];
+
+const DEFAULT_CATEGORY_ALIASES = [
+  {
+    canonical: "ค่าขนส่ง",
+    aliases: ["ค่าเดินทาง", "เดินทาง", "ขนส่ง/เดินทาง", "ค่าน้ำมัน", "น้ำมัน", "ทางด่วน", "grab", "bolt", "taxi"]
+  },
+  {
+    canonical: "ค่าเช่าอุปกรณ์",
+    aliases: ["ค่าเช่า", "เช่า", "เช่าเครื่องมือ", "เช่าเครน", "เช่านั่งร้าน"]
+  },
+  {
+    canonical: "วัสดุโครงสร้าง",
+    aliases: ["วัสดุ", "วัสดุ/อุปกรณ์", "อุปกรณ์", "โครงสร้าง", "เหล็ก", "ไม้"]
+  },
+  {
+    canonical: "วัสดุตกแต่ง",
+    aliases: ["ตกแต่ง", "อะคริลิก", "ผ้า", "ของตกแต่ง"]
+  },
+  {
+    canonical: "งานพิมพ์/กราฟิก",
+    aliases: ["งานพิมพ์", "พิมพ์", "กราฟิก", "สติกเกอร์", "แบนเนอร์"]
+  },
+  {
+    canonical: "ค่าใช้จ่ายสำนักงาน",
+    aliases: ["สำนักงาน", "ออฟฟิศ", "office"]
+  },
+  {
+    canonical: "ค่าสาธารณูปโภค",
+    aliases: ["ค่าน้ำ", "ค่าไฟ", "ค่าเน็ต", "ไฟฟ้า", "น้ำประปา", "internet"]
+  },
+  {
+    canonical: "ภาษี/VAT",
+    aliases: ["ภาษี", "vat", "ภาษีvat"]
+  }
+];
+
+const DEFAULT_MERCHANT_ALIASES = [];
+
+const DEFAULT_ITEM_ALIASES = [
+  {
+    canonical: "ค่าน้ำมัน",
+    aliases: ["น้ำมัน", "fuel", "gasoline"]
+  },
+  {
+    canonical: "ค่าทางด่วน",
+    aliases: ["ทางด่วน", "toll", "expressway"]
+  },
+  {
+    canonical: "ค่าส่งของ",
+    aliases: ["ส่งของ", "ค่าส่ง", "delivery", "shipping"]
+  }
+];
+
+const PENDING_LABOR_CONFIRM_TTL_SEC = 21600;
+const PENDING_DELETE_CONFIRM_TTL_SEC = 600;
+const RECENT_RECEIPT_DUP_TTL_SEC = 1800;
+const LINE_PROFILE_CACHE_TTL_SEC = 21600;
+const FIRESTORE_EXPENSE_CACHE_TTL_MS = 15000;
+const RECORD_SOURCE_LINE_BOT = "LINE_BOT";
+const RECORD_STATUS_PENDING_REVIEW = "PENDING_REVIEW";
+const RECORD_STATUS_IMPORTED = "IMPORTED";
+const RECORD_STATUS_DELETED = "DELETED";
+const RECORD_STATUS_REJECTED = "REJECTED";
+const DUPLICATE_STATUS_UNIQUE = "UNIQUE";
+const DUPLICATE_STATUS_POSSIBLE_DUPLICATE = "POSSIBLE_DUPLICATE";
+const SHEET_SYNC_STATUS_PENDING = "pending";
+const SHEET_SYNC_STATUS_OK = "ok";
+const SHEET_SYNC_STATUS_ERROR = "error";
+const FIRESTORE_EXPENSE_LIST_FIELD_MASKS = [
+  "type",
+  "date",
+  "dateKey",
+  "monthKey",
+  "weekKey",
+  "isActive",
+  "merchant",
+  "amount",
+  "category",
+  "categoryId",
+  "items",
+  "note",
+  "job",
+  "jobId",
+  "jobNameNormalized",
+  "vendorId",
+  "workerId",
+  "laborWeek",
+  "laborMonth",
+  "sourceKey",
+  "sourceMessageId",
+  "sourceMimeType",
+  "attachmentUrl",
+  "attachmentPath",
+  "attachmentMimeType",
+  "source",
+  "status",
+  "createdByLineUserId",
+  "createdByDisplayName",
+  "createdFromLineMessageId",
+  "storageUrl",
+  "storagePath",
+  "ocrConfidence",
+  "duplicateStatus",
+  "possibleDuplicateIds",
+  "fingerprint",
+  "sheetSyncStatus",
+  "sheetSyncError",
+  "sheetSyncedAt",
+  "parsedAt",
+  "normalizedAt",
+  "occurredAt",
+  "createdAt",
+  "updatedAt"
+];
+const LABOR_NOTE_FORMAT_EXAMPLE = "ค่าแรง_W1_เม.ย._งานบูธA";
+const LABOR_NOTE_FORMAT_HINT = "ค่าแรง_W1_เม.ย._ชื่องาน";
+
+const RECEIPT_PROMPT = `
+คุณคือ AI อ่านเอกสารการเงินสำหรับธุรกิจผลิตบูธนิทรรศการ
+วิเคราะห์รูปหรือ PDF แล้วตอบเป็น JSON ตาม schema เท่านั้น — ห้าม markdown ห้าม \`\`\`
+
+━━ STEP 1 · type ━━
+"expense" = จ่ายเงินออก (ซื้อของ จ่ายค่าแรง โอนให้คนอื่น)
+"income"  = รับเงินเข้า (ลูกค้าโอนมา รับมัดจำ รับค่างวด)
+→ income เมื่อ: YUPPIE หรือบริษัทเราเป็นฝั่ง "ผู้รับ" หรือเอกสารคือใบรับเงิน/ใบรับมัดจำ
+→ expense เมื่อ: YUPPIE หรือบริษัทเราเป็นฝั่ง "ผู้โอน/Sender/From Account" และผู้รับไม่ใช่บริษัทเรา
+→ ถ้า structured note เป็นหมวดรายจ่าย เช่น ค่าแรง วัสดุ ค่าขนส่ง ค่าเช่า ให้ถือเป็น expense เสมอ แม้เอกสารมีชื่อ YUPPIE
+
+━━ STEP 2 · date ━━
+รูปแบบ YYYY-MM-DD (ค.ศ. เท่านั้น) — ถ้าปี > 2400 ให้ลบ 543 — ไม่มีวันที่ใช้วันนี้
+
+━━ STEP 3 · amount ━━
+ใช้ยอดสุทธิสุดท้าย (รวม VAT / ยอดโอนจริง)
+ห้ามใช้: subtotal, ราคาก่อน VAT, ยอดย่อย
+
+━━ STEP 4 · merchant (ลำดับ priority สูงสุดไปต่ำสุด) ━━
+1. สลิปธนาคาร → "Account Name / ชื่อบัญชี" ฝั่งผู้รับเสมอ
+2. เอกสารค่าแรง → ชื่อใน "ผู้รับเงิน / รับโดย / ช่าง / คนงาน"
+3. ใบเสร็จ/invoice → ชื่อร้านค้าหรือบริษัทผู้ขาย
+4. ไม่มีเลย → "ไม่ระบุ"
+ห้ามใช้เด็ดขาด: ชื่อ Sender / ผู้โอน / หัวบิลผู้ออกเอกสาร / YUPPIE (ยกเว้น income)
+
+━━ STEP 5 · category (priority: remarks > รายการสินค้า > ชื่อร้าน) ━━
+expense → เลือก 1 จาก:
+  "ค่าแรง"             ← ค่าจ้าง ช่าง คนงาน รายวัน รายสัปดาห์ เบิกค่าแรง
+  "วัสดุโครงสร้าง"     ← เหล็ก ไม้ HMR โครงสร้างบูธ
+  "วัสดุตกแต่ง"        ← อะคริลิก ผ้า สี ของประดับ (ไม่ใช่โครงสร้าง)
+  "งานพิมพ์/กราฟิก"    ← พิมพ์ สติกเกอร์ แบนเนอร์ กราฟิก
+  "ค่าขนส่ง"           ← น้ำมัน รถ ทางด่วน Grab Taxi ขนส่ง
+  "ค่าเช่าอุปกรณ์"     ← เช่าเครน นั่งร้าน เครื่องมือ รถ พื้นที่
+  "ค่าสาธารณูปโภค"     ← ไฟฟ้า น้ำ อินเทอร์เน็ต
+  "ค่าใช้จ่ายสำนักงาน" ← เครื่องเขียน อุปกรณ์สำนักงาน
+  "ภาษี/VAT"           ← ภาษีมูลค่าเพิ่ม ภาษีหัก ณ ที่จ่าย
+  "อื่นๆ"              ← ไม่เข้าหมวดใด
+income → เลือก 1 จาก: "ค่าผลิตบูธ" | "ค่าออกแบบ" | "ค่าติดตั้ง" | "ค่าขนส่ง" | "เงินมัดจำ" | "ค่างวดงาน" | "อื่นๆ"
+⚠ merchant เป็นชื่อบุคคล + ไม่มี context ค่าแรง → ใช้ "อื่นๆ" ห้ามเดาเป็น "ค่าแรง"
+
+━━ STEP 6 · job ━━
+ยึดชื่องานจากเอกสารตรงๆ ห้ามแต่งใหม่ — ไม่มี → "งานทั่วไป"
+ถ้าเป็นค่าใช้จ่ายกลางที่ไม่ได้ผูกกับงานลูกค้า เช่น เดินทางมาโรงงาน ค่าน้ำมันมาโรงงาน ค่าทางด่วนมาโรงงาน หรือของใช้ในโรงงาน → ใช้ job="โรงงาน"
+
+━━ structured note สำคัญที่สุด ━━
+ถ้าหมายเหตุ/Remarks มีรูปแบบคั่นด้วย "_" ให้ใช้เป็นข้อมูลหลักก่อน OCR ส่วนอื่น:
+ค่าแรง_W1_เม.ย._งานบูธA → category="ค่าแรง", week=1, month=เมษายน, job="งานบูธA", items="ค่าแรง"
+วัสดุโครงสร้าง_งานบูธA_เหล็กกล่อง → category="วัสดุโครงสร้าง", job="งานบูธA", items="เหล็กกล่อง"
+งานบูธA_เหล็กกล่อง → job="งานบูธA", category จากรายการ, items="เหล็กกล่อง"
+เหล็กกล่อง_งานบูธA → job="งานบูธA", category จากรายการ, items="เหล็กกล่อง"
+ค่าเช่าอุปกรณ์_งานบูธA_เช่าเครน → category="ค่าเช่าอุปกรณ์", job="งานบูธA", items="เช่าเครน"
+ค่าขนส่ง_โรงงาน_ค่าน้ำมันมาโรงงาน → category="ค่าขนส่ง", job="โรงงาน", items="ค่าน้ำมันมาโรงงาน"
+ค่าใช้จ่ายสำนักงาน_โรงงาน_กระดาษเอกสาร → category="ค่าใช้จ่ายสำนักงาน", job="โรงงาน", items="กระดาษเอกสาร"
+ห้ามนำข้อความบริการธนาคารมาแทน structured note
+
+━━ items & note ━━
+items: สรุปรายการสินค้า/บริการสั้นๆ — ห้ามใส่ชื่อบริการธนาคาร (Product Name, Payment Advice ฯลฯ)
+note: ข้อความหมายเหตุสำคัญ verbatim — สลิปธนาคาร: ใส่ชื่อบัญชีผู้รับซ้ำไว้ด้วย
+ห้ามสร้าง field raw OCR ยาวๆ ใน JSON เช่น ocrRawText เพราะจะทำให้ JSON ใหญ่และพัง
+ถ้าไม่แน่ใจ ให้ใส่ข้อความสั้นใน note เท่านั้น
+
+━━ bank object ━━
+is_transfer_slip: true เมื่อเป็นสลิปหรือเอกสารโอนเงิน
+receiver_account_name: ชื่อบัญชีฝั่งรับ | sender_account_name: ชื่อบัญชีฝั่งโอน
+remarks: ข้อความหมายเหตุ/Remarks ตรงตัว
+structured note "ค่าแรง_W1_เม.ย._ชื่องาน" → ส่วน1=หมวด, ส่วน2=week, ส่วน3=เดือน, ส่วน4=job
+`.trim();
+
+function getConfig() {
+  const props = PropertiesService.getScriptProperties();
+
+  return {
+    lineToken: getRequiredScriptProperty_(props, "LINE_TOKEN"),
+    lineChannelSecret: getOptionalScriptProperty_(props, "LINE_CHANNEL_SECRET"),
+    geminiKey: getRequiredScriptProperty_(props, "GEMINI_KEY"),
+    firebaseProjectId: getRequiredScriptProperty_(props, "FIREBASE_PROJECT_ID"),
+    firebaseStorageBucket: getOptionalScriptProperty_(props, "FIREBASE_STORAGE_BUCKET"),
+    sheetId: getRequiredScriptProperty_(props, "SHEET_ID"),
+    webhookSecret: getOptionalScriptProperty_(props, "WEBHOOK_SECRET"),
+    ownCompanyAliases: getListScriptProperty_(props, "OWN_COMPANY_ALIASES", DEFAULT_OWN_COMPANY_HINTS),
+    jobAliases: getMapListScriptProperty_(props, "JOB_ALIASES").concat(DEFAULT_JOB_ALIASES),
+    merchantAliases: getMapListScriptProperty_(props, "MERCHANT_ALIASES").concat(DEFAULT_MERCHANT_ALIASES),
+    categoryAliases: getMapListScriptProperty_(props, "CATEGORY_ALIASES").concat(DEFAULT_CATEGORY_ALIASES),
+    itemAliases: getMapListScriptProperty_(props, "ITEM_ALIASES").concat(DEFAULT_ITEM_ALIASES)
+  };
+}
+
+function getRequiredScriptProperty_(props, key) {
+  const value = String(props.getProperty(key) || "").trim();
+  if (!value) {
+    throw new Error(`ยังไม่ได้ตั้งค่า Script Property: ${key}`);
+  }
+  return value;
+}
+
+function getOptionalScriptProperty_(props, key) {
+  return String(props.getProperty(key) || "").trim();
+}
+
+function getListScriptProperty_(props, key, defaultList) {
+  const raw = String(props.getProperty(key) || "").trim();
+  if (!raw) {
+    return (defaultList || []).slice();
+  }
+
+  return raw
+    .split(",")
+    .map(function(item) {
+      return String(item || "").trim();
+    })
+    .filter(Boolean);
+}
+
+function getMapListScriptProperty_(props, key) {
+  const raw = String(props.getProperty(key) || "").trim();
+  if (!raw) {
+    return [];
+  }
+
+  return raw
+    .split(/\r?\n/)
+    .map(function(line) {
+      const parts = String(line || "").split("=");
+      const canonical = String(parts.shift() || "").trim();
+      const aliases = parts.join("=").split(",").map(function(alias) {
+        return String(alias || "").trim();
+      }).filter(Boolean);
+
+      if (!canonical || !aliases.length) {
+        return null;
+      }
+
+      return {
+        canonical: canonical,
+        aliases: aliases
+      };
+    })
+    .filter(Boolean);
+}
+
+function getFirebaseStorageBucketCandidates_(config) {
+  const candidates = [];
+  const bucket = String(config && config.firebaseStorageBucket || "").trim();
+  const projectId = String(config && config.firebaseProjectId || "").trim();
+
+  if (bucket) {
+    candidates.push(bucket);
+  }
+
+  if (projectId) {
+    candidates.push(`${projectId}.firebasestorage.app`);
+    candidates.push(`${projectId}.appspot.com`);
+  }
+
+  const unique = {};
+  return candidates.filter(function(candidate) {
+    const value = String(candidate || "").trim();
+    if (!value || unique[value]) {
+      return false;
+    }
+    unique[value] = true;
+    return true;
+  });
+}
