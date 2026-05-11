@@ -3,7 +3,8 @@
  * Text command handlers and command response builders.
  */
 
-function handleTextMessage(event) {
+function handleTextMessage(event, context) {
+  const safeContext = context || {};
   const replyToken = event.replyToken;
   const userText = String(event.message.text || "").trim();
 
@@ -51,6 +52,51 @@ function handleTextMessage(event) {
     return;
   }
 
+  if (userText === "jobs ค้าง" || userText.toLowerCase() === "queue status") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง queue ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildReceiptJobQueueStatusMessage_(getReceiptJobQueueStatus_()));
+    return;
+  }
+
+  if (userText === "process jobs" || userText === "ประมวลผล jobs") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง queue ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildReceiptJobProcessResultMessage_(processPendingReceiptJobs(RECEIPT_JOB_DEFAULT_BATCH_SIZE)));
+    return;
+  }
+
+  if (userText === "retry jobs" || userText === "ลอง jobs ใหม่") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง queue ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildReceiptJobRetryMessage_(retryReceiptJobs(5)));
+    return;
+  }
+
+  if (userText === "failed jobs" || userText === "jobs fail") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง queue ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildFailedReceiptJobsMessage_(getReceiptJobsByStatus_(RECEIPT_JOB_STATUS_FAILED, 10)));
+    return;
+  }
+
+  if (userText === "gas usage วันนี้" || userText.toLowerCase() === "gas usage today") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง usage ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildGasUsageTodayMessage_(getGasUsageTodaySummary_()));
+    return;
+  }
+
   if (userText === "ลบล่าสุด ยืนยัน" || userText.toLowerCase() === "delete latest confirm") {
     if (!checkAdminUser_(event)) {
       replyText(replyToken, "คำสั่งลบข้อมูลใช้ได้เฉพาะผู้ดูแลระบบครับ");
@@ -93,9 +139,18 @@ function handleTextMessage(event) {
     return;
   }
 
+  if (userText === "รายการรอยืนยัน" || userText.toLowerCase() === "pending review") {
+    handlePendingReviewCommand_(event);
+    return;
+  }
+
   if (userText === "รายการล่าสุด" || userText === "ล่าสุด" || userText.toLowerCase() === "latest") {
     const records = getRecentExpenseRecords_(getConversationKey_(event.source), 1);
-    replyText(replyToken, buildRecentRecordsMessage_(records, "รายการล่าสุด"));
+    if (!records.length) {
+      replyText(replyToken, buildRecentRecordsMessage_(records, "รายการล่าสุด"));
+      return;
+    }
+    sendLineMessages(replyToken, [buildLatestTransactionCard(records[0])]);
     return;
   }
 
@@ -103,7 +158,93 @@ function handleTextMessage(event) {
   if (recentMatch) {
     const limit = Math.min(Math.max(parseInt(recentMatch[1], 10) || 5, 1), 10);
     const records = getRecentExpenseRecords_(getConversationKey_(event.source), limit);
-    replyText(replyToken, buildRecentRecordsMessage_(records, `ล่าสุด ${limit} รายการ`));
+    if (!records.length) {
+      replyText(replyToken, buildRecentRecordsMessage_(records, `ล่าสุด ${limit} รายการ`));
+      return;
+    }
+    sendLineMessages(replyToken, [buildLatestTransactionsCarousel(records)]);
+    return;
+  }
+
+  if (userText.toLowerCase() === "sheet sync mode" || userText === "โหมด sync sheet") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง Sheet sync ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildSheetSyncModeMessage_());
+    return;
+  }
+
+  if (userText.toLowerCase() === "sync sheet latest" || userText === "sync sheet ล่าสุด") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง Sheet sync ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    const latestDoc = getLatestExpenseDocument_(getConversationKey_(event.source));
+    const result = latestDoc
+      ? syncTransactionToSheet(latestDoc.name, {
+        syncType: SHEET_SYNC_MODE_MANUAL,
+        target: "latest",
+        actorLineUserId: event.source && event.source.userId || "",
+        force: true
+      })
+      : { ok: false, reason: "not_found" };
+    replyText(replyToken, buildSheetSyncSingleMessage_(result));
+    return;
+  }
+
+  if (userText.toLowerCase() === "sync sheet today" || userText === "sync sheet วันนี้") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง Sheet sync ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildSheetSyncBatchMessage_(syncSheetToday_(event.source && event.source.userId || "")));
+    return;
+  }
+
+  if (userText.toLowerCase() === "sync sheet this month" || userText === "sync sheet เดือนนี้") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง Sheet sync ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildSheetSyncBatchMessage_(syncSheetCurrentMonth_(event.source && event.source.userId || "")));
+    return;
+  }
+
+  const syncSheetJobMatch = userText.match(/^sync sheet\s+งาน\s*(.+)$/i);
+  if (syncSheetJobMatch) {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง Sheet sync ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildSheetSyncBatchMessage_(syncSheetJob_(syncSheetJobMatch[1], event.source && event.source.userId || "")));
+    return;
+  }
+
+  if (userText.toLowerCase() === "sync error retry" || userText === "sync error retry") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง Sheet sync ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildSheetSyncBatchMessage_(retrySheetSyncErrors(10)));
+    return;
+  }
+
+  if (userText.toLowerCase() === "sync pending retry" || userText === "sync pending retry") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง Sheet sync ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildSheetSyncBatchMessage_(syncPendingSheetRows(50)));
+    return;
+  }
+
+  if (userText.toLowerCase() === "sync pending" || userText === "รายการรอ sync") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง Sheet sync ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildSheetSyncPendingMessage_(getSheetSyncPendingSummary_()));
     return;
   }
 
@@ -117,6 +258,16 @@ function handleTextMessage(event) {
       return;
     }
     replyText(replyToken, buildSyncErrorRecordsMessage_(getSheetSyncErrors(10)));
+    return;
+  }
+
+  const retrySheetSyncMatch = userText.match(/^(?:retry sync|retry sheet|ซ่อม sync|ซ่อมชีต)\s+(.+)$/i);
+  if (retrySheetSyncMatch) {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่งซ่อม Sheet sync ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildRetrySheetSyncMessage_(retrySheetSync(retrySheetSyncMatch[1])));
     return;
   }
 
@@ -174,7 +325,19 @@ function handleTextMessage(event) {
   const summaryMatch = userText.match(/^สรุปงบ\s+(.+)$/i);
   if (summaryMatch) {
     const jobQuery = summaryMatch[1].trim();
-    const result = getProjectSummary(jobQuery);
+    const result = isFactorySummaryQuery_(jobQuery)
+      ? handleFactorySummaryCommand({
+        event: event,
+        inputText: userText,
+        traceId: safeContext.traceId || "",
+        lineUserId: event.source && event.source.userId || ""
+      })
+      : handleJobSummaryCommand(jobQuery, {
+        event: event,
+        inputText: userText,
+        traceId: safeContext.traceId || "",
+        lineUserId: event.source && event.source.userId || ""
+      });
     sendLineMessages(replyToken, [result]);
     return;
   }
@@ -362,12 +525,232 @@ function buildSyncErrorRecordsMessage_(records) {
   const lines = ["รายการ sync error", "────────────"];
   records.forEach(function(record, index) {
     lines.push(`${index + 1}. ${formatRecordOneLine_(record)}`);
+    lines.push(`ID: ${getShortFirestoreDocumentId_(record.documentName)}`);
     lines.push(`งาน: ${record.job || "-"}`);
     lines.push(`สาเหตุ: ${truncateText_(record.sheetSyncError || "-", 120)}`);
     lines.push("");
   });
 
   return lines.join("\n");
+}
+
+
+function buildRetrySheetSyncMessage_(result) {
+  if (!result || !result.ok) {
+    return [
+      "ซ่อม Google Sheet sync ไม่สำเร็จ",
+      "────────────",
+      `สาเหตุ: ${result && result.reason || result && result.errorMessage || "unknown"}`,
+      "",
+      "ใช้ ID จากคำสั่ง `sync error` เช่น:",
+      "`retry sync DOCUMENT_ID`"
+    ].join("\n");
+  }
+
+  if (result.skipped) {
+    if (result.reason !== "already_synced") {
+      return [
+        "Google Sheet sync ถูกข้าม",
+        "────────────",
+        `เหตุผล: ${result.reason || "-"}`,
+        `Mode: ${result.sheetSyncMode || getSheetSyncMode()}`
+      ].join("\n");
+    }
+
+    return [
+      "Google Sheet sync อยู่ในสถานะ SYNCED แล้ว",
+      "────────────",
+      `ID: ${getShortFirestoreDocumentId_(result.documentName)}`
+    ].join("\n");
+  }
+
+  return [
+    "ซ่อม Google Sheet sync สำเร็จ",
+    "────────────",
+    `ID: ${getShortFirestoreDocumentId_(result.documentName)}`
+  ].join("\n");
+}
+
+
+function buildSheetSyncModeMessage_() {
+  const summary = getSheetSyncPendingSummary_();
+  return [
+    "Sheet Sync Mode",
+    "────────────",
+    `โหมดปัจจุบัน: ${summary.mode}`,
+    "",
+    "ความหมาย:",
+    "OFF = ไม่ sync Google Sheets",
+    "MANUAL = รอ admin สั่ง sync",
+    "BATCH = รอ sync เป็นรอบ",
+    "REALTIME = sync ทันทีหลังบันทึก",
+    "",
+    "สถานะค้าง:",
+    `PENDING: ${summary.pendingCount}`,
+    `PENDING_MANUAL: ${summary.pendingManualCount}`,
+    `ERROR: ${summary.errorCount}`
+  ].join("\n");
+}
+
+
+function buildSheetSyncSingleMessage_(result) {
+  if (!result || !result.ok) {
+    return [
+      "Sheet sync ไม่สำเร็จ",
+      "────────────",
+      `สาเหตุ: ${result && (result.reason || result.errorMessage) || "unknown"}`
+    ].join("\n");
+  }
+
+  if (result.skipped) {
+    return [
+      "Sheet sync ถูกข้าม",
+      "────────────",
+      `เหตุผล: ${result.reason || "-"}`,
+      `Mode: ${result.sheetSyncMode || getSheetSyncMode()}`
+    ].join("\n");
+  }
+
+  return [
+    "Sheet sync สำเร็จ",
+    "────────────",
+    `ID: ${getShortFirestoreDocumentId_(result.documentName)}`,
+    `Mode: ${result.sheetSyncMode || getSheetSyncMode()}`,
+    `เขียน Sheet: ${result.sheetWriteCount || 0} row`,
+    `เวลา: ${result.elapsedMs || 0} ms`
+  ].join("\n");
+}
+
+
+function buildSheetSyncBatchMessage_(result) {
+  if (!result) {
+    return "Sheet sync ไม่สำเร็จ\n────────────\nไม่พบผลลัพธ์";
+  }
+
+  return [
+    result.ok ? "Sheet sync batch เสร็จแล้ว" : "Sheet sync batch มีบางรายการผิดพลาด",
+    "────────────",
+    `Mode: ${result.sheetSyncMode || getSheetSyncMode()}`,
+    `Target: ${result.target || "-"}`,
+    `ทั้งหมด: ${result.totalCount || 0}`,
+    `สำเร็จ: ${result.successCount || 0}`,
+    `ผิดพลาด: ${result.errorCount || 0}`,
+    `เขียน Sheet: ${result.sheetWriteCount || 0} row`,
+    `เวลา: ${result.elapsedMs || 0} ms`
+  ].join("\n");
+}
+
+
+function buildSheetSyncPendingMessage_(summary) {
+  const safeSummary = summary || {};
+  return [
+    "Sheet sync pending",
+    "────────────",
+    `Mode: ${safeSummary.mode || getSheetSyncMode()}`,
+    `PENDING: ${safeSummary.pendingCount || 0}`,
+    `PENDING_MANUAL: ${safeSummary.pendingManualCount || 0}`,
+    `ERROR: ${safeSummary.errorCount || 0}`,
+    "",
+    "คำสั่งที่ใช้ต่อ:",
+    "`sync pending retry`",
+    "`sync error`",
+    "`sync error retry`"
+  ].join("\n");
+}
+
+
+function buildReceiptJobQueueStatusMessage_(summary) {
+  const safeSummary = summary || {};
+  return [
+    "Receipt Queue Status",
+    "────────────",
+    `QUEUED: ${safeSummary[RECEIPT_JOB_STATUS_QUEUED] || 0}`,
+    `RETRY_PENDING: ${safeSummary[RECEIPT_JOB_STATUS_RETRY_PENDING] || 0}`,
+    `PROCESSING_PAUSED: ${safeSummary[RECEIPT_JOB_STATUS_PROCESSING_PAUSED] || 0}`,
+    `PROCESSING: ${safeSummary[RECEIPT_JOB_STATUS_PROCESSING] || 0}`,
+    `FAILED: ${safeSummary[RECEIPT_JOB_STATUS_FAILED] || 0}`,
+    "",
+    "คำสั่งต่อ:",
+    "`process jobs`",
+    "`retry jobs`",
+    "`failed jobs`"
+  ].join("\n");
+}
+
+
+function buildReceiptJobProcessResultMessage_(result) {
+  const safeResult = result || {};
+  if (safeResult.skipped) {
+    return [
+      "Receipt worker skipped",
+      "────────────",
+      `สาเหตุ: ${safeResult.reason || "-"}`
+    ].join("\n");
+  }
+
+  return [
+    "Receipt worker finished",
+    "────────────",
+    `ประมวลผล: ${safeResult.processedCount || 0}`,
+    `สำเร็จ: ${safeResult.completedCount || 0}`,
+    `ซ้ำ: ${safeResult.duplicateSkippedCount || 0}`,
+    `รอ retry: ${safeResult.retryPendingCount || 0}`,
+    `ล้มเหลว: ${safeResult.failedCount || 0}`,
+    `paused: ${safeResult.paused === true ? "yes" : "no"}`
+  ].join("\n");
+}
+
+
+function buildReceiptJobRetryMessage_(result) {
+  return [
+    "Retry receipt jobs",
+    "────────────",
+    `นำกลับเข้าคิว: ${result && result.retriedCount || 0}`
+  ].join("\n");
+}
+
+
+function buildFailedReceiptJobsMessage_(jobs) {
+  const safeJobs = jobs || [];
+  if (!safeJobs.length) {
+    return [
+      "Failed jobs",
+      "────────────",
+      "ไม่พบ failed job"
+    ].join("\n");
+  }
+
+  const lines = ["Failed jobs", "────────────"];
+  safeJobs.slice(0, 10).forEach(function(job, index) {
+    lines.push(`${index + 1}. ${getShortReceiptJobId_(job.jobId || job.documentName)}`);
+    lines.push(`retry: ${job.retryCount || 0}/${job.maxRetry || RECEIPT_JOB_DEFAULT_MAX_RETRY}`);
+    lines.push(`error: ${truncateText_(job.safeError || job.lastSafeError || "-", 120)}`);
+    lines.push("");
+  });
+  lines.push("ใช้ `retry jobs` เพื่อนำกลับเข้าคิว");
+  return lines.join("\n");
+}
+
+
+function buildGasUsageTodayMessage_(summary) {
+  const safeSummary = summary || {};
+  return [
+    `GAS usage วันนี้ ${safeSummary.date || formatDateToYMD(new Date())}`,
+    "────────────",
+    `executions: ${safeSummary.executionCount || 0}`,
+    `executionMs: ${Number(safeSummary.executionMs || 0).toLocaleString()}`,
+    `UrlFetch: ${safeSummary.urlFetchCount || 0}`,
+    `Gemini: ${safeSummary.geminiCallCount || 0}`,
+    `errors: ${safeSummary.errorCount || 0}`
+  ].join("\n");
+}
+
+
+function getShortFirestoreDocumentId_(documentName) {
+  const value = String(documentName || "").trim();
+  if (!value) return "-";
+  const parts = value.split("/");
+  return parts[parts.length - 1] || value;
 }
 
 
@@ -412,6 +795,10 @@ function buildEditLatestMessage_(result) {
     return help.join("\n");
   }
 
+  const sheetLine = result.sheetSync
+    ? `Sheet sync: ${result.sheetSync.skipped ? "รอ sync ภายหลัง" : (result.sheetUpdated ? "อัปเดตแล้ว" : "ไม่สำเร็จ")} (${result.sheetSync.sheetSyncMode || getSheetSyncMode()})`
+    : `Google Sheet: ${result.sheetUpdated ? "อัปเดตแล้ว" : "ไม่พบแถวเดิมที่ตรงกัน"}`;
+
   return [
     "แก้รายการล่าสุดเรียบร้อย",
     "────────────",
@@ -419,7 +806,7 @@ function buildEditLatestMessage_(result) {
     `งาน: ${result.record.job || "-"}`,
     `รายการ: ${result.record.items || "-"}`,
     "",
-    `Google Sheet: ${result.sheetUpdated ? "อัปเดตแล้ว" : "ไม่พบแถวเดิมที่ตรงกัน"}`
+    sheetLine
   ].join("\n");
 }
 
@@ -456,8 +843,23 @@ function buildHelpMessage_() {
     "ค่าแรง สัปดาห์ที่ 1 เมษายน",
     "รายการล่าสุด",
     "ล่าสุด 5",
+    "รายการรอยืนยัน",
     "sync error",
+    "sheet sync mode",
+    "sync pending",
+    "sync pending retry",
+    "sync error retry",
+    "sync sheet ล่าสุด",
+    "sync sheet วันนี้",
+    "sync sheet เดือนนี้",
+    "sync sheet งานบูธA",
+    "retry sync DOCUMENT_ID",
     "รายการ duplicate",
+    "jobs ค้าง",
+    "process jobs",
+    "retry jobs",
+    "failed jobs",
+    "gas usage วันนี้",
     "",
     "แก้เมื่อ AI อ่านผิด",
     "แก้ล่าสุด หมวด ค่าแรง",
@@ -557,7 +959,29 @@ function handleLatestCommand_(event, limit) {
   const safeLimit = Math.min(Math.max(parseInt(limit || 1, 10) || 1, 1), 10);
   const records = getRecentExpenseRecords_(getConversationKey_(event.source), safeLimit);
   const title = safeLimit === 1 ? "รายการล่าสุด" : `ล่าสุด ${safeLimit} รายการ`;
-  replyText(event.replyToken, buildRecentRecordsMessage_(records, title));
+  if (!records.length) {
+    replyText(event.replyToken, buildRecentRecordsMessage_(records, title));
+    return;
+  }
+  sendLineMessages(event.replyToken, [
+    safeLimit === 1
+      ? buildLatestTransactionCard(records[0])
+      : buildLatestTransactionsCarousel(records)
+  ]);
+}
+
+function handlePendingReviewCommand_(event) {
+  const records = getPendingReviewTransactions_(5);
+  if (!records.length) {
+    replyText(event.replyToken, [
+      "รายการรอยืนยัน",
+      "────────────",
+      "ไม่พบรายการที่รอตรวจสอบ"
+    ].join("\n"));
+    return;
+  }
+
+  sendLineMessages(event.replyToken, records.slice(0, 5).map(buildPendingReviewCard));
 }
 
 function handleEditLatestCommand_(event, field, value) {

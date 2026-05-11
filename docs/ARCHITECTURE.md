@@ -2,6 +2,24 @@
 
 This file is optional reference material. The required operational docs are `COMMANDS.md`, `DEPLOYMENT.md`, `DATABASE_SCHEMA.md`, `SHEET_SCHEMA.md`, and `MAINTENANCE.md`.
 
+## Stable Summary Query Model
+
+Normal LINE text commands read from Firestore only. Summary commands use a fixed scope model:
+
+```text
+scopeType = FACTORY | JOB | UNKNOWN
+scopeKey  = FACTORY | jobId | ""
+monthKey  = YYYY-MM (factory monthly summary and active jobs only)
+status    = IMPORTED
+isActive  = true
+```
+
+Factory expenses use `scopeType=FACTORY`, `scopeKey=FACTORY`, and current `monthKey` for `สรุปงบ โรงงาน`. Project expenses use `scopeType=JOB` and `scopeKey=jobId` for `สรุปงบ งาน...`, intentionally without `monthKey` so multi-month projects are totaled together. Unknown rows are excluded from normal summaries and marked `reviewNeeded=true`.
+
+Receipt/image/PDF processing is the only flow that may use `sourceMessageId`, `fileHash`, `fingerprint`, OCR, or Gemini. Text summary commands must never call duplicate-check or file-processing functions.
+
+See `docs/FIRESTORE_QUERY_CATALOG.md` for the approved query shapes and required indexes.
+
 ## Flow
 
 ```mermaid
@@ -16,7 +34,7 @@ flowchart TD
   Normalizer --> Bank["AI_BankParser.gs"]
   Receipt --> Storage["Storage_Repository.gs"]
   Receipt --> Firestore["Firestore_Repository.gs"]
-  Receipt --> Sheet["Sheet_Repository.gs"]
+  Receipt --> Sheet["Sheet_Repository.gs report/export layer"]
   Commands --> Labor["Labor_Service.gs"]
   Commands --> Summary["Summary_Service.gs"]
   Commands --> UI["Line_UI.gs / Flex_Builder.gs"]
@@ -46,6 +64,18 @@ record.date / occurredAt
 record.job + JOB_ALIASES
   -> jobNameNormalized
   -> jobId
+jobNameNormalized == โรงงาน
+  -> costCenter=FACTORY
+  -> scope=FACTORY
+  -> scopeType=FACTORY
+  -> scopeKey=FACTORY
+  -> isFactoryExpense=true
+known customer job
+  -> scopeType=JOB
+  -> scopeKey=jobId
+unknown scope
+  -> scopeType=UNKNOWN
+  -> reviewNeeded=true
 record.category + CATEGORY_ALIASES
   -> categoryId
 record.merchant
@@ -57,3 +87,118 @@ status
 ```
 
 `getAllExpenses()` is retained only for legacy/dev maintenance and must not be used by normal bot commands.
+
+`สรุปงบ โรงงาน` is routed to `handleFactorySummaryCommand()` and queries by `scopeType=FACTORY`, `scopeKey=FACTORY`, and current `monthKey`. `สรุปงบ งาน...` is routed to `handleJobSummaryCommand()` and queries by `scopeType=JOB` and `scopeKey=jobId` without `monthKey`.
+
+The `fileHash` query belongs only to the receipt duplicate guard:
+
+```text
+processReceipt()
+  -> fetchLineFileAsBase64()
+  -> getTransactionByFileHash_()
+```
+
+Summary commands must not call the `fileHash` duplicate lookup.
+
+## Sheet Sync Architecture
+
+Firestore is the source of truth. Google Sheets is only a report/export snapshot and must not be used to calculate bot command responses.
+
+```mermaid
+flowchart TD
+  Save["Confirm transaction"] --> FS["Write Firestore first"]
+  FS --> Mode["Read SHEET_SYNC_MODE"]
+  Mode -->|OFF| Disabled["sheetSyncStatus=DISABLED"]
+  Mode -->|MANUAL| Manual["sheetSyncStatus=PENDING_MANUAL"]
+  Mode -->|BATCH| Batch["sheetSyncStatus=PENDING"]
+  Mode -->|REALTIME| Realtime["Try Sheet upsert"]
+  Realtime -->|Success| Synced["sheetSyncStatus=SYNCED"]
+  Realtime -->|Fail| Error["sheetSyncStatus=ERROR + safe error"]
+  Manual --> Admin["Admin sync commands"]
+  Batch --> BatchJob["syncPendingSheetRows(batchSize)"]
+```
+
+Sheet sync writes only lightweight report fields such as date, type, job, category, merchant, amount, status, note, storageUrl, display name, sync status, and transactionId. Heavy fields such as OCR raw text, Gemini raw response, raw file data, storage metadata, audit details, and debug logs are not written to Sheets.
+
+## Duplicate and Performance Flow
+
+```mermaid
+flowchart TD
+  A["Webhook receipt event"] --> B["Check LINE message ID cache/Firestore"]
+  B -->|Duplicate| R1["Reply duplicate and stop"]
+  B -->|New| C["Download LINE file"]
+  C --> D["Compute SHA-256 fileHash"]
+  D --> E["Query Firestore by fileHash"]
+  E -->|Duplicate| R2["Reply duplicate and skip Gemini"]
+  E -->|New| F["Gemini OCR"]
+  F --> G["Parse and normalize"]
+  G --> H["Query fingerprint / possible duplicate"]
+  H --> I["Upload attachment to Firebase Storage"]
+  I --> J["Write Firestore source of truth"]
+  J --> K["Apply SHEET_SYNC_MODE"]
+  K --> L["Reply LINE"]
+  L --> M["Write processLogs timing summary"]
+```
+
+`processLogs` stores stage timings only. It must not store tokens, raw files, or full OCR payloads.
+
+Command errors use the same safe logging rule. The user-facing LINE reply contains only an `ERR-xxxx` reference ID, while `auditLogs` and `processLogs` store redacted debugging fields such as `commandName`, `functionName`, `queryName`, `safeErrorMessage`, and `stackTrace`.
+# Runtime Queue Architecture
+
+Receipt image/PDF processing now uses a lightweight webhook plus Firestore queue model.
+
+## doPost Lightweight Flow
+
+`doPost(e)` should stay short:
+
+1. Validate webhook/config/permission.
+2. Route text commands directly to `handleTextMessage()`.
+3. For LINE image/PDF/file events, run only line-message duplicate checks.
+4. Create a `receipt_jobs` document with `status=QUEUED`.
+5. Reply with “รับไฟล์แล้ว กำลังประมวลผล”.
+6. End the webhook request.
+
+The webhook must not run Gemini OCR, Firebase Storage upload, large PDF processing, batch Sheet sync, or long loops.
+
+## Receipt Worker Flow
+
+`processPendingReceiptJobs(batchSize)` is the worker entry point. Run it manually from Apps Script or attach it to a time-driven trigger.
+
+Worker flow:
+
+1. Acquire `LockService` script lock.
+2. Load up to 3 queued/retry jobs by default.
+3. Lock each job as `PROCESSING`.
+4. Download LINE file.
+5. Check `fileHash` and `fingerprint` duplicates before Gemini.
+6. Run Gemini only after duplicate checks pass.
+7. Save the transaction to Firestore.
+8. Set Sheet sync status according to `SHEET_SYNC_MODE`.
+9. Mark the job `COMPLETED`, `DUPLICATE_SKIPPED`, `RETRY_PENDING`, `PROCESSING_PAUSED`, or `FAILED`.
+
+## Runtime Guard
+
+`RuntimeGuard_Service.gs` prevents hard Apps Script timeout. Long workers call `assertCanContinue(stepName)` between heavy stages. If remaining time is low, processing stops intentionally and the job is marked for retry instead of letting GAS terminate silently.
+
+## Locks
+
+`LockService` is used for:
+
+- `processPendingReceiptJobs`
+- `syncPendingSheetRows`
+- `retrySheetSyncErrors`
+
+This prevents duplicate job processing and concurrent Sheet writes.
+
+## UrlFetch Metrics
+
+All outbound calls should go through `safeUrlFetch()`. It records:
+
+- `urlFetchCount`
+- `geminiCallCount`
+- `firestoreReadCount`
+- `firestoreWriteCount`
+- `sheetWriteCount`
+- `lineReplyCount`
+
+Logs are written to `processLogs` without tokens or secrets.

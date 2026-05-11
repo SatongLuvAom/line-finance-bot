@@ -281,9 +281,7 @@ function inferLaborWeekByTransferOrder_(dateString) {
     filters: [
       { field: "categoryId", value: buildStableEntityId_("category", LABOR_CATEGORY_NAME) }
     ],
-    orderBy: [
-      { field: "occurredAt", direction: "ASCENDING" }
-    ],
+    orderBy: [],
     limit: 500
   });
 
@@ -343,9 +341,7 @@ function inferSequenceWeek_(dateString) {
     filters: [
       { field: "categoryId", value: buildStableEntityId_("category", LABOR_CATEGORY_NAME) }
     ],
-    orderBy: [
-      { field: "occurredAt", direction: "ASCENDING" }
-    ],
+    orderBy: [],
     limit: 500
   });
   const previousDatesMap = {};
@@ -484,6 +480,8 @@ function processManualLabor(event, amount, job, rawDate, note) {
 
 function saveManualLaborRecord_(replyToken, record, meta) {
   const safeMeta = meta || {};
+  const sheetSyncMode = getSheetSyncMode();
+  const initialSheetSyncStatus = getInitialSheetSyncStatusForMode_(sheetSyncMode);
   record = finalizeRecordMetadata_(record, {
     sourceMessageId: String(safeMeta.sourceMessageId || ""),
     lineUserId: String(safeMeta.lineUserId || ""),
@@ -522,6 +520,8 @@ function saveManualLaborRecord_(replyToken, record, meta) {
     ocrConfidence: record.ocrConfidence,
     duplicateStatus: record.duplicateStatus,
     possibleDuplicateIds: record.possibleDuplicateIds,
+    sheetSyncStatus: initialSheetSyncStatus,
+    sheetSyncError: "",
     parsedAt: record.parsedAt,
     normalizedAt: record.normalizedAt
   });
@@ -531,34 +531,11 @@ function saveManualLaborRecord_(replyToken, record, meta) {
     lineUserId: String(record.createdByLineUserId || "")
   });
 
-  const sheetSync = saveExpenseToSheetSafely_({
-    type: "expense",
-    date: record.date,
-    merchant: record.merchant,
-    category: record.category,
-    job: record.job,
-    amount: record.amount,
-    items: record.items,
-    note: record.note,
-    laborWeek: record.laborWeek,
-    laborMonth: record.laborMonth,
-    attachmentUrl: "",
-    attachmentPath: "",
-    attachmentMimeType: "",
-    source: record.source,
-    status: record.status,
-    createdByLineUserId: record.createdByLineUserId,
-    createdByDisplayName: record.createdByDisplayName,
-    createdFromLineMessageId: record.createdFromLineMessageId,
-    storageUrl: record.storageUrl,
-    storagePath: record.storagePath,
-    ocrRawText: record.ocrRawText,
-    ocrConfidence: record.ocrConfidence,
-    duplicateStatus: record.duplicateStatus,
-    possibleDuplicateIds: record.possibleDuplicateIds,
-    parsedAt: record.parsedAt,
-    normalizedAt: record.normalizedAt
-  }, savedDoc && savedDoc.name || "");
+  const sheetSync = handleSheetSyncAfterFirestoreSave_(savedDoc && savedDoc.name || "", {
+    target: "manual_labor",
+    actorLineUserId: String(record.createdByLineUserId || ""),
+    recordStatus: record.status
+  });
 
   const rawDate = safeMeta.rawDate ? safeMeta.rawDate : record.date;
   const lines = [

@@ -24,9 +24,12 @@ function validateRequiredProperties_() {
   const required = [
     "LINE_TOKEN",
     "GEMINI_KEY",
-    "FIREBASE_PROJECT_ID",
-    "SHEET_ID"
+    "FIREBASE_PROJECT_ID"
   ];
+  const sheetSyncMode = normalizeSheetSyncMode_(getOptionalProperty_("SHEET_SYNC_MODE", DEFAULT_SHEET_SYNC_MODE));
+  if (sheetSyncMode !== SHEET_SYNC_MODE_OFF) {
+    required.push("SHEET_ID");
+  }
 
   const missing = required.filter(function(key) {
     return !getOptionalProperty_(key, "");

@@ -1,22 +1,41 @@
 # Commands
 
-All commands are sent as LINE text messages.
+All commands are sent as LINE text messages. Command calculations read from Firestore only.
 
-| Command | Example | Expected Output | Permission |
+## User Commands
+
+| Command | Example | Output | Permission |
 | --- | --- | --- | --- |
 | `help` / `menu` / `เมนู` | `help` | Professional command guide | Allowed user |
 | `วิธีส่งสลิป` | `วิธีส่งสลิป` | Slip and note-format guide | Allowed user |
 | `หมายเหตุค่าใช้จ่าย` | `หมายเหตุค่าใช้จ่าย` | Recommended structured note formats | Allowed user |
 | `เทส` / `test` | `เทส` | Bot status plus Group ID or User ID | Allowed user |
-| `งานเดือนนี้` | `งานเดือนนี้` | Active jobs with spending this month | Allowed user |
-| `สรุปงบ ...` | `สรุปงบ งานบูธA` | Project budget summary | Allowed user |
-| `ค่าแรง สัปดาห์ที่ ...` | `ค่าแรง สัปดาห์ที่ 1 เมษายน` | Labor summary for week/month | Allowed user |
-| `รายการล่าสุด` / `ล่าสุด` | `รายการล่าสุด` | Latest record for this chat/user scope | Allowed user |
-| `ล่าสุด N` | `ล่าสุด 5` | Up to 10 latest records | Allowed user |
+| `งานเดือนนี้` | `งานเดือนนี้` | Current-month active scopes grouped by job/factory | Allowed user |
+| `สรุปงบ งาน...` | `สรุปงบ งานบูธA` | Total job budget summary across all months | Allowed user |
+| `สรุปงบ โรงงาน` | `สรุปงบ โรงงาน` | Current-month factory/central expense summary | Allowed user |
+| `ค่าแรง สัปดาห์ที่ X เดือน Y` | `ค่าแรง สัปดาห์ที่ 1 เมษายน` | Labor summary for the requested week/month | Allowed user |
+| `รายการล่าสุด` / `ล่าสุด` | `รายการล่าสุด` | Latest active record for this chat/user scope | Allowed user |
+| `ล่าสุด N` | `ล่าสุด 5` | Up to 10 latest active records | Allowed user |
 | `แก้ล่าสุด ...` | `แก้ล่าสุด หมวด ค่าแรง` | Updates the latest record field | Allowed user |
-| `ลบล่าสุด` | `ลบล่าสุด` | Shows delete confirmation prompt | Admin if configured |
-| `ลบล่าสุด ยืนยัน` | `ลบล่าสุด ยืนยัน` | Deletes latest pending record | Admin if configured |
 | `บันทึกค่าแรง ...` | `บันทึกค่าแรง 500 งานเชื่อม 01/04/2026 เบิกสด` | Saves manual labor expense | Allowed user |
+
+## Admin Commands
+
+| Command | Example | Output | Permission |
+| --- | --- | --- | --- |
+| `ลบล่าสุด` | `ลบล่าสุด` | Shows delete confirmation prompt | Admin if configured |
+| `ลบล่าสุด ยืนยัน` | `ลบล่าสุด ยืนยัน` | Deletes the pending latest record | Admin if configured |
+| `sheet sync mode` | `sheet sync mode` | Current `SHEET_SYNC_MODE` and pending/error counts | Admin if configured |
+| `sync sheet ล่าสุด` | `sync sheet ล่าสุด` | Sync latest transaction in this chat to Sheet | Admin if configured |
+| `sync sheet วันนี้` | `sync sheet วันนี้` | Sync today's pending/error imported transactions | Admin if configured |
+| `sync sheet เดือนนี้` | `sync sheet เดือนนี้` | Sync this month's pending/error imported transactions | Admin if configured |
+| `sync sheet งาน...` | `sync sheet งานบูธA` | Sync pending/error imported transactions for one job | Admin if configured |
+| `sync pending` | `sync pending` | Show pending/manual/error counts | Admin if configured |
+| `sync pending retry` | `sync pending retry` | Sync up to 50 pending rows | Admin if configured |
+| `sync error` | `sync error` | Show latest Sheet sync errors | Admin if configured |
+| `sync error retry` | `sync error retry` | Retry up to 10 rows with `sheetSyncStatus=ERROR` | Admin if configured |
+| `retry sync ...` | `retry sync DOCUMENT_ID` | Retry Sheet sync for one transaction | Admin if configured |
+| `รายการ duplicate` / `รายการซ้ำ` / `duplicate` | `รายการ duplicate` | Show possible duplicate records | Admin if configured |
 
 ## Editable Latest Fields
 
@@ -40,29 +59,15 @@ Use `_` as the delimiter.
 | Use Case | Format | Example |
 | --- | --- | --- |
 | Labor | `ค่าแรง_W1_เม.ย._ชื่องาน` | `ค่าแรง_W1_เม.ย._งานบูธA` |
-| Structural material | `วัสดุโครงสร้าง_ชื่องาน_รายการ` | `วัสดุโครงสร้าง_งานบูธA_เหล็กกล่อง` |
-| Decorative material | `วัสดุตกแต่ง_ชื่องาน_รายการ` | `วัสดุตกแต่ง_งานบูธA_ผ้า` |
-| Printing/graphic | `งานพิมพ์/กราฟิก_ชื่องาน_รายการ` | `งานพิมพ์/กราฟิก_งานบูธA_สติกเกอร์` |
-| Transport | `ค่าขนส่ง_ชื่องาน_รายการ` | `ค่าขนส่ง_งานบูธA_น้ำมันรถ` |
-| Factory transport | `ค่าขนส่ง_โรงงาน_รายการ` | `ค่าขนส่ง_โรงงาน_ค่าน้ำมันมาโรงงาน` |
-| Factory office expense | `ค่าใช้จ่ายสำนักงาน_โรงงาน_รายการ` | `ค่าใช้จ่ายสำนักงาน_โรงงาน_กระดาษเอกสาร` |
-| Factory utility | `ค่าสาธารณูปโภค_โรงงาน_รายการ` | `ค่าสาธารณูปโภค_โรงงาน_ค่าไฟ` |
-| Equipment rental | `ค่าเช่าอุปกรณ์_ชื่องาน_รายการ` | `ค่าเช่าอุปกรณ์_งานบูธA_เช่าเครน` |
-| Other | `อื่นๆ_ชื่องาน_รายการ` | `อื่นๆ_งานบูธA_ค่าดำเนินการ` |
+| Material | `หมวด_ชื่องาน_รายการ` | `วัสดุโครงสร้าง_งานบูธA_เหล็กกล่อง` |
+| Transport | `ค่าขนส่ง_ชื่องาน_รายการ` | `ค่าขนส่ง_งานบูธA_ค่าน้ำมันรถ` |
+| Factory/central expense | `หมวด_โรงงาน_รายการ` | `ค่าขนส่ง_โรงงาน_ค่าน้ำมันมาโรงงาน` |
 
-Best format is always `หมวด_ชื่องาน_รายการ`. The bot also supports `ชื่องาน_รายการ`, `รายการ_ชื่องาน`, and `หมวด_รายการ_ชื่องาน` when one side clearly looks like a job name, for example `งานแมว_เหล็ก`, `เหล็ก_งานแมว`, or `วัสดุ_สีเทา_งานแมว`.
-
-## Factory / Overhead Expenses
-
-Use `โรงงาน` as the standard job name for expenses that are not tied to a customer project.
-
-Recommended examples:
+Recommended factory examples:
 
 ```text
 ค่าขนส่ง_โรงงาน_ค่าน้ำมันมาโรงงาน
 ค่าขนส่ง_โรงงาน_ค่าทางด่วนมาโรงงาน
-ค่าขนส่ง_โรงงาน_Grab มาโรงงาน
-ค่าขนส่ง_โรงงาน_ค่ารถไปซื้อของเข้าโรงงาน
 ค่าใช้จ่ายสำนักงาน_โรงงาน_กระดาษเอกสาร
 ค่าสาธารณูปโภค_โรงงาน_ค่าไฟ
 ค่าเช่าอุปกรณ์_โรงงาน_เช่าเครื่องมือ
@@ -70,56 +75,24 @@ Recommended examples:
 อื่นๆ_โรงงาน_ค่าดำเนินการทั่วไป
 ```
 
-Use these commands to review factory expenses:
+Do not use `งานทั่วไป` when the expense clearly belongs to the factory. Keep `งานทั่วไป` only as the fallback when the bot/user truly does not know the job.
 
-```text
-สรุปงบ โรงงาน
-งานเดือนนี้
-ล่าสุด 5
-```
+## Stable Summary Commands
 
-Do not use `งานทั่วไป` when the expense is clearly for the factory. Keep `งานทั่วไป` only as a fallback when the job is genuinely unknown.
+Current query behavior:
 
-## Master Data / Alias
+| Command | Query Model |
+| --- | --- |
+| `สรุปงบ โรงงาน` | `isActive=true`, `status=IMPORTED`, current `monthKey`, `scopeType=FACTORY`, `scopeKey=FACTORY` |
+| `สรุปงบ งาน...` | `isActive=true`, `status=IMPORTED`, `scopeType=JOB`, `scopeKey=jobId`; no `monthKey`; fallback to indexed `jobId` if old rows are not backfilled |
+| `งานเดือนนี้` | `isActive=true`, `status=IMPORTED`, current `monthKey`, grouped by `scopeType/scopeKey` |
+| `ค่าแรง สัปดาห์ที่ X เดือน Y` | `isActive=true`, `status=IMPORTED`, `categoryId=ค่าแรง`, `weekKey=YYYY-MM-WN` |
 
-Aliases are managed in Apps Script Script Properties. Use one line per canonical value.
-
-```text
-ชื่อมาตรฐาน=ชื่อเล่น1,ชื่อเล่น2,ชื่อเล่น3
-```
-
-Recommended baseline:
-
-```text
-JOB_ALIASES
-โรงงาน=Factory,โรงงานยัพพี,ส่วนกลางโรงงาน,ค่าใช้จ่ายโรงงาน
-งานบูธA=บูธA,booth a,งานA
-
-MERCHANT_ALIASES
-ไทวัสดุ=Thai Watsadu,ไทวัส,ไทวัสดุ สาขาบางนา
-นายสมชาย=สมชาย,ช่างชาย,นาย สมชาย
-
-CATEGORY_ALIASES
-ค่าขนส่ง=ค่าเดินทาง,ค่าน้ำมัน,น้ำมัน,ทางด่วน,grab
-วัสดุโครงสร้าง=วัสดุ,เหล็ก,ไม้,อุปกรณ์
-
-ITEM_ALIASES
-ค่าน้ำมัน=น้ำมัน,fuel,gasoline
-ค่าทางด่วน=ทางด่วน,toll,expressway
-```
-
-Aliases affect new receipt parsing, summaries, and `แก้ล่าสุด` for `งาน`, `ผู้รับ`, `หมวด`, and `รายการ`.
-
-## Additional Maintenance Commands
-
-| Command | Example | Expected Output | Permission |
-| --- | --- | --- | --- |
-| `sync error` / `sheet sync error` | `sync error` | Latest records whose Google Sheet sync failed | Admin if configured |
-| `รายการ duplicate` / `รายการซ้ำ` / `duplicate` | `duplicate` | Latest possible duplicate records | Admin if configured |
+Summary commands never call receipt duplicate checks and never query `fileHash`, `fingerprint`, or Google Sheets.
 
 ## Indexed Query Notes
 
-The following commands now use indexed Firestore queries instead of scanning all transactions:
+The following commands use indexed Firestore queries instead of collection scans:
 
 ```text
 รายการล่าสุด
@@ -129,9 +102,29 @@ The following commands now use indexed Firestore queries instead of scanning all
 สรุปงบ โรงงาน
 ค่าแรง สัปดาห์ที่ X เดือน Y
 sync error
+sync pending
+sheet sync mode
+sync sheet ล่าสุด
+sync sheet วันนี้
+sync sheet เดือนนี้
+sync sheet งาน...
+sync pending retry
+sync error retry
+retry sync DOCUMENT_ID
 รายการ duplicate
 แก้ล่าสุด ...
 ลบล่าสุด
 ```
+# Receipt Queue Admin Commands
 
-For `สรุปงบ ...`, the job name is normalized through `JOB_ALIASES` and matched by `jobId`. Keep job aliases up to date so summaries remain exact and fast.
+These commands manage the asynchronous receipt queue. They are admin-only when `ADMIN_LINE_USER_IDS` is configured.
+
+| Command | Example | Output |
+| --- | --- | --- |
+| `jobs ค้าง` / `queue status` | `queue status` | Counts `QUEUED`, `RETRY_PENDING`, `PROCESSING_PAUSED`, `PROCESSING`, and `FAILED` jobs |
+| `process jobs` | `process jobs` | Manually runs `processPendingReceiptJobs(3)` |
+| `retry jobs` | `retry jobs` | Moves retryable/failed jobs back to `QUEUED` |
+| `failed jobs` | `failed jobs` | Lists latest failed jobs with sanitized errors |
+| `gas usage วันนี้` | `gas usage วันนี้` | Shows today's process log counters |
+
+Normal slip submission is unchanged for users. Image/PDF events are queued first and processed by the worker.

@@ -42,6 +42,7 @@ function queryExpenses(options) {
     logFirestoreQuery_(queryName, filters, limit, documents.length, Date.now() - startedAt);
     return documents;
   } catch (err) {
+    annotateFirestoreQueryError_(err, queryName, filters, limit);
     logFirestoreQuery_(queryName, filters, limit, documents.length, Date.now() - startedAt, err);
     throw err;
   }
@@ -197,7 +198,8 @@ function normalizeSelectFields_(selectFields) {
     ocrRawText: true,
     geminiRawResponse: true,
     rawFileData: true,
-    storageMetadata: true
+    storageMetadata: true,
+    auditDetails: true
   };
   const map = {};
   const result = [];
@@ -239,6 +241,19 @@ function logFirestoreQuery_(queryName, filters, limit, resultCount, elapsedMs, e
 }
 
 
+function annotateFirestoreQueryError_(err, queryName, filters, limit) {
+  if (!err || typeof err !== "object") return;
+
+  try {
+    err.queryName = String(queryName || "expenses.query");
+    err.queryFilters = sanitizeQueryFiltersForLog_(filters || []);
+    err.queryLimit = Number(limit || 0);
+  } catch (annotateErr) {
+    logError_("firestore.query.annotate.error", annotateErr);
+  }
+}
+
+
 function sanitizeQueryFiltersForLog_(filters) {
   return (filters || []).map(function(filter) {
     return {
@@ -266,14 +281,28 @@ function buildExpenseQueryKeys_(record) {
     : normalizeCategory(safeRecord.category);
   const merchant = normalizeMerchantAlias_(safeRecord.merchant || "");
   const jobNameNormalized = normalizeJobAlias_(safeRecord.job || "งานทั่วไป") || "งานทั่วไป";
+  const isFactoryExpense = isFactoryExpenseRecord_(safeRecord, jobNameNormalized);
+  const jobId = buildStableEntityId_("job", jobNameNormalized);
+  const summaryScope = buildSummaryScopeKeys_(safeRecord, {
+    jobNameNormalized: jobNameNormalized,
+    jobId: jobId,
+    isFactoryExpense: isFactoryExpense
+  });
 
   return {
     isActive: isTransactionActiveStatus_(status),
     dateKey: dateKey,
     monthKey: monthKey,
     weekKey: `${monthKey}-W${weekNumber}`,
-    jobId: buildStableEntityId_("job", jobNameNormalized),
+    jobId: jobId,
     jobNameNormalized: jobNameNormalized,
+    costCenter: isFactoryExpense ? FACTORY_COST_CENTER : "",
+    scope: isFactoryExpense ? FACTORY_SCOPE : PROJECT_SCOPE,
+    scopeType: summaryScope.scopeType,
+    scopeKey: summaryScope.scopeKey,
+    reviewNeeded: summaryScope.reviewNeeded || safeRecord.reviewNeeded === true,
+    isFactoryExpense: isFactoryExpense,
+    factoryReviewNeeded: safeRecord.factoryReviewNeeded === true,
     categoryId: buildStableEntityId_("category", category),
     vendorId: category === LABOR_CATEGORY_NAME ? "" : buildStableEntityId_("vendor", merchant),
     workerId: category === LABOR_CATEGORY_NAME ? buildStableEntityId_("worker", merchant) : "",
@@ -293,6 +322,80 @@ function buildExpenseQueryKeys_(record) {
     duplicateStatus: String(safeRecord.duplicateStatus || DUPLICATE_STATUS_UNIQUE).trim() || DUPLICATE_STATUS_UNIQUE,
     sheetSyncStatus: String(safeRecord.sheetSyncStatus || SHEET_SYNC_STATUS_PENDING).trim() || SHEET_SYNC_STATUS_PENDING
   };
+}
+
+
+function buildSummaryScopeKeys_(record, keys) {
+  const safeRecord = record || {};
+  const safeKeys = keys || {};
+  const explicitType = String(safeRecord.scopeType || "").trim().toUpperCase();
+  const explicitKey = String(safeRecord.scopeKey || "").trim();
+  const jobNameNormalized = String(safeKeys.jobNameNormalized || normalizeJobAlias_(safeRecord.jobNameNormalized || safeRecord.job || "") || "").trim();
+  const jobId = String(safeKeys.jobId || safeRecord.jobId || buildStableEntityId_("job", jobNameNormalized)).trim();
+
+  if (
+    explicitType === SUMMARY_SCOPE_TYPE_FACTORY ||
+    safeKeys.isFactoryExpense === true ||
+    isFactoryExpenseRecord_(safeRecord, jobNameNormalized)
+  ) {
+    return {
+      scopeType: SUMMARY_SCOPE_TYPE_FACTORY,
+      scopeKey: SUMMARY_SCOPE_KEY_FACTORY,
+      reviewNeeded: false
+    };
+  }
+
+  if (explicitType === SUMMARY_SCOPE_TYPE_JOB && explicitKey) {
+    return {
+      scopeType: SUMMARY_SCOPE_TYPE_JOB,
+      scopeKey: explicitKey,
+      reviewNeeded: false
+    };
+  }
+
+  if (jobNameNormalized && !isKnownJobScopeName_(jobNameNormalized)) {
+    return {
+      scopeType: SUMMARY_SCOPE_TYPE_UNKNOWN,
+      scopeKey: "",
+      reviewNeeded: true
+    };
+  }
+
+  if (jobId && jobId !== "job_unknown") {
+    return {
+      scopeType: SUMMARY_SCOPE_TYPE_JOB,
+      scopeKey: jobId,
+      reviewNeeded: false
+    };
+  }
+
+  if (isKnownJobScopeName_(jobNameNormalized)) {
+    return {
+      scopeType: SUMMARY_SCOPE_TYPE_JOB,
+      scopeKey: jobId,
+      reviewNeeded: false
+    };
+  }
+
+  return {
+    scopeType: SUMMARY_SCOPE_TYPE_UNKNOWN,
+    scopeKey: "",
+    reviewNeeded: true
+  };
+}
+
+
+function isKnownJobScopeName_(jobName) {
+  const normalized = normalizeComparableText_(jobName || "");
+  if (!normalized) return false;
+
+  const unknownNames = [
+    normalizeComparableText_("งานทั่วไป"),
+    normalizeComparableText_("ทั่วไป"),
+    "unknown",
+    "general"
+  ];
+  return unknownNames.indexOf(normalized) === -1;
 }
 
 
@@ -321,6 +424,19 @@ function normalizeTransactionWeekNumber_(record, dateKey) {
 function isTransactionActiveStatus_(status) {
   const value = String(status || "").trim().toUpperCase();
   return value !== RECORD_STATUS_DELETED && value !== RECORD_STATUS_REJECTED;
+}
+
+
+function isFactoryExpenseRecord_(record, normalizedJobName) {
+  const safeRecord = record || {};
+  const costCenter = String(safeRecord.costCenter || "").trim().toUpperCase();
+  const scope = String(safeRecord.scope || "").trim().toUpperCase();
+  if (costCenter === FACTORY_COST_CENTER || scope === FACTORY_SCOPE || safeRecord.isFactoryExpense === true) {
+    return true;
+  }
+
+  const jobName = normalizeJobAlias_(normalizedJobName || safeRecord.job || "");
+  return normalizeComparableText_(jobName) === normalizeComparableText_(FACTORY_JOB_NAME);
 }
 
 
@@ -424,6 +540,117 @@ function getTransactionsByMonth(monthKey, options) {
 }
 
 
+function getSummaryTransactionsByMonth(monthKey, options) {
+  const safeOptions = options || {};
+  const filters = [
+    { field: "isActive", value: true },
+    { field: "status", value: RECORD_STATUS_IMPORTED },
+    { field: "monthKey", value: String(monthKey || "").trim() }
+  ];
+
+  return queryExpenses({
+    queryName: safeOptions.queryName || "summary_month",
+    filters: filters,
+    limit: Math.max(1, Number(safeOptions.limit || 1000)),
+    selectFields: safeOptions.selectFields || getExpenseLightSelectFields_()
+  }).map(getFirestoreRecordFromDocument_);
+}
+
+
+function getSummaryTransactionsByScope_(scopeType, scopeKey, monthKey, options) {
+  const safeOptions = options || {};
+  const filters = [
+    { field: "isActive", value: true },
+    { field: "status", value: RECORD_STATUS_IMPORTED },
+    { field: "monthKey", value: String(monthKey || "").trim() },
+    { field: "scopeType", value: String(scopeType || "").trim().toUpperCase() },
+    { field: "scopeKey", value: String(scopeKey || "").trim() }
+  ];
+
+  return queryExpenses({
+    queryName: safeOptions.queryName || "summary_by_scope_month",
+    filters: filters,
+    limit: Math.max(1, Number(safeOptions.limit || 500)),
+    selectFields: safeOptions.selectFields || getExpenseLightSelectFields_()
+  }).map(getFirestoreRecordFromDocument_);
+}
+
+
+function getSummaryTransactionsByScopeTotal_(scopeType, scopeKey, options) {
+  const safeOptions = options || {};
+  const filters = [
+    { field: "isActive", value: true },
+    { field: "status", value: RECORD_STATUS_IMPORTED },
+    { field: "scopeType", value: String(scopeType || "").trim().toUpperCase() },
+    { field: "scopeKey", value: String(scopeKey || "").trim() }
+  ];
+
+  return queryExpenses({
+    queryName: safeOptions.queryName || "summary_by_scope_total",
+    filters: filters,
+    limit: Math.max(1, Number(safeOptions.limit || 1000)),
+    selectFields: safeOptions.selectFields || getExpenseLightSelectFields_()
+  }).map(getFirestoreRecordFromDocument_);
+}
+
+
+function getFactorySummaryByMonth(monthKey) {
+  return getSummaryTransactionsByScope_(
+    SUMMARY_SCOPE_TYPE_FACTORY,
+    SUMMARY_SCOPE_KEY_FACTORY,
+    monthKey,
+    {
+      queryName: "summary_factory_month",
+      limit: 500
+    }
+  );
+}
+
+
+function getFactoryMonthlySummary(monthKey) {
+  return getFactorySummaryByMonth(monthKey);
+}
+
+
+function getJobSummaryByMonth(jobId, monthKey) {
+  return getSummaryTransactionsByScope_(
+    SUMMARY_SCOPE_TYPE_JOB,
+    jobId,
+    monthKey,
+    {
+      queryName: "summary_job_month",
+      limit: 500
+    }
+  );
+}
+
+
+function getJobTotalSummary(jobId) {
+  return getSummaryTransactionsByScopeTotal_(
+    SUMMARY_SCOPE_TYPE_JOB,
+    jobId,
+    {
+      queryName: "summary_job_total",
+      limit: 1000
+    }
+  );
+}
+
+
+function getJobTotalSummaryByJobId(jobId) {
+  return queryExpenses({
+    queryName: "summary_job_total_by_job_id",
+    filters: [
+      { field: "isActive", value: true },
+      { field: "status", value: RECORD_STATUS_IMPORTED },
+      { field: "jobId", value: String(jobId || "").trim() }
+    ],
+    limit: 1000,
+    selectFields: getExpenseLightSelectFields_()
+  }).map(getFirestoreRecordFromDocument_);
+}
+
+
 function getTransactionsByJob(jobId, options) {
   const safeOptions = options || {};
   const filters = [
@@ -450,10 +677,82 @@ function getTransactionsByJob(jobId, options) {
 }
 
 
+function getFactoryTransactions(options) {
+  const safeOptions = options || {};
+  const filters = [
+    { field: "isActive", value: true },
+    { field: "costCenter", value: FACTORY_COST_CENTER },
+    { field: "status", value: RECORD_STATUS_IMPORTED }
+  ];
+
+  if (safeOptions.monthKey) {
+    filters.push({ field: "monthKey", value: String(safeOptions.monthKey) });
+  }
+  (safeOptions.filters || []).forEach(function(filter) {
+    filters.push(filter);
+  });
+
+  try {
+    return queryExpenses({
+      queryName: safeOptions.queryName || "factory_summary",
+      filters: filters,
+      orderBy: safeOptions.orderBy || [
+        { field: "occurredAt", direction: "DESCENDING" }
+      ],
+      limit: Math.max(1, Number(safeOptions.limit || 1000)),
+      selectFields: safeOptions.selectFields || getExpenseLightSelectFields_()
+    }).map(getFirestoreRecordFromDocument_);
+  } catch (err) {
+    if (!/index|requires an index|FAILED_PRECONDITION/i.test(String(err && err.message || err))) {
+      throw err;
+    }
+
+    logInfo("getFactoryTransactions.indexFallback", {
+      queryName: safeOptions.queryName || "factory_summary",
+      errorMessage: buildUserFriendlyErrorMessage_(err)
+    });
+
+    let fallbackRecords = [];
+    try {
+      fallbackRecords = queryExpenses({
+        queryName: (safeOptions.queryName || "factory_summary") + "_fallback_no_order",
+        filters: filters,
+        limit: Math.max(1, Number(safeOptions.limit || 1000)),
+        selectFields: safeOptions.selectFields || getExpenseLightSelectFields_()
+      }).map(getFirestoreRecordFromDocument_);
+    } catch (fallbackErr) {
+      if (!/index|requires an index|FAILED_PRECONDITION/i.test(String(fallbackErr && fallbackErr.message || fallbackErr))) {
+        throw fallbackErr;
+      }
+
+      logInfo("getFactoryTransactions.costCenterOnlyFallback", {
+        queryName: safeOptions.queryName || "factory_summary",
+        errorMessage: buildUserFriendlyErrorMessage_(fallbackErr)
+      });
+      fallbackRecords = queryExpenses({
+        queryName: (safeOptions.queryName || "factory_summary") + "_fallback_cost_center_only",
+        filters: [
+          { field: "costCenter", value: FACTORY_COST_CENTER }
+        ],
+        limit: Math.max(1, Number(safeOptions.limit || 1000)),
+        selectFields: safeOptions.selectFields || getExpenseLightSelectFields_()
+      }).map(getFirestoreRecordFromDocument_);
+    }
+
+    return fallbackRecords.sort(function(a, b) {
+      const aDate = String(a.occurredAt || a.date || a.createdAt || "");
+      const bDate = String(b.occurredAt || b.date || b.createdAt || "");
+      return bDate.localeCompare(aDate);
+    });
+  }
+}
+
+
 function getLaborTransactionsByWeek(weekKey, options) {
   const safeOptions = options || {};
   const filters = [
     { field: "isActive", value: true },
+    { field: "status", value: RECORD_STATUS_IMPORTED },
     { field: "categoryId", value: buildStableEntityId_("category", LABOR_CATEGORY_NAME) },
     { field: "weekKey", value: String(weekKey || "").trim() }
   ];
@@ -465,10 +764,7 @@ function getLaborTransactionsByWeek(weekKey, options) {
   return queryExpenses({
     queryName: safeOptions.queryName || "labor_by_week",
     filters: filters,
-    orderBy: safeOptions.orderBy || [
-      { field: "occurredAt", direction: "ASCENDING" },
-      { field: "createdAt", direction: "ASCENDING" }
-    ],
+    orderBy: safeOptions.orderBy || [],
     limit: Math.max(1, Number(safeOptions.limit || 500)),
     selectFields: safeOptions.selectFields || getExpenseLightSelectFields_()
   }).map(getFirestoreRecordFromDocument_);
@@ -480,7 +776,7 @@ function getSheetSyncErrors(limit) {
     queryName: "sheet_sync_errors",
     filters: [
       { field: "isActive", value: true },
-      { field: "sheetSyncStatus", value: SHEET_SYNC_STATUS_ERROR }
+      { field: "sheetSyncStatus", op: "IN", value: [SHEET_SYNC_STATUS_ERROR, "error"] }
     ],
     orderBy: [
       { field: "updatedAt", direction: "DESCENDING" }
@@ -504,6 +800,62 @@ function getPossibleDuplicates(limit) {
     limit: Math.max(1, Number(limit || 10)),
     selectFields: getExpenseLightSelectFields_()
   }).map(getFirestoreRecordFromDocument_);
+}
+
+
+function getPendingReviewTransactions_(limit) {
+  return queryExpenses({
+    queryName: "pending_review_transactions",
+    filters: [
+      { field: "status", value: RECORD_STATUS_PENDING_REVIEW }
+    ],
+    orderBy: [],
+    limit: Math.max(1, Number(limit || 5)),
+    selectFields: getExpenseLightSelectFields_()
+  }).map(getFirestoreRecordFromDocument_).filter(function(record) {
+    return record.isActive !== false && isTransactionActiveStatus_(record.status);
+  });
+}
+
+
+function getTransactionByFileHash_(fileHash) {
+  const target = String(fileHash || "").trim();
+  if (!target) return null;
+
+  let records = [];
+  try {
+    records = queryExpenses({
+      queryName: "transaction_by_file_hash",
+      filters: [
+        { field: "fileHash", value: target },
+        { field: "isActive", value: true }
+      ],
+      orderBy: [
+        { field: "createdAt", direction: "DESCENDING" }
+      ],
+      limit: 1,
+      selectFields: getExpenseLightSelectFields_()
+    }).map(getFirestoreRecordFromDocument_);
+  } catch (err) {
+    if (!/index|requires an index|FAILED_PRECONDITION/i.test(String(err && err.message || err))) {
+      throw err;
+    }
+
+    logInfo("getTransactionByFileHash_.indexFallback", {
+      errorMessage: buildUserFriendlyErrorMessage_(err)
+    });
+    records = queryExpenses({
+      queryName: "transaction_by_file_hash_fallback_no_order",
+      filters: [
+        { field: "fileHash", value: target },
+        { field: "isActive", value: true }
+      ],
+      limit: 1,
+      selectFields: getExpenseLightSelectFields_()
+    }).map(getFirestoreRecordFromDocument_);
+  }
+
+  return records.length ? records[0] : null;
 }
 
 

@@ -5,6 +5,11 @@
 
 function doPost(e) {
   const traceId = createRequestTraceId_();
+  let status = "ok";
+  startExecutionMetrics_("webhook", {
+    traceId: traceId,
+    eventType: "webhook"
+  });
 
   try {
     logInfo_("doPost.start", {
@@ -16,6 +21,7 @@ function doPost(e) {
 
     if (!validateWebhookRequest_(e, traceId)) {
       logInfo_("doPost.invalidWebhookRequest", { traceId: traceId });
+      status = "forbidden";
       return ContentService.createTextOutput("Forbidden");
     }
 
@@ -38,7 +44,14 @@ function doPost(e) {
       routeLineEvent_(event, { traceId: traceId });
     }
   } catch (err) {
+    status = "error";
+    incrementExecutionMetric_("errorCount", 1);
     handleWebhookError_(err, null, traceId);
+  } finally {
+    finishExecutionMetrics_(status, {
+      traceId: traceId,
+      eventType: "webhook"
+    });
   }
 
   return ContentService.createTextOutput("OK");

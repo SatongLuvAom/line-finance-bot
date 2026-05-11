@@ -35,34 +35,25 @@ const INCOME_CATEGORY_OPTIONS = [
 ];
 
 const EXPENSE_SHEET_HEADERS = [
-  "type",
+  "transactionId",
   "date",
-  "merchant",
-  "category",
+  "type",
   "job",
+  "category",
+  "merchant",
+  "payer",
   "amount",
+  "status",
   "items",
   "note",
   "laborWeek",
   "laborMonth",
-  "attachmentUrl",
-  "attachmentPath",
-  "attachmentMimeType",
-  "source",
-  "status",
-  "createdByLineUserId",
-  "createdByDisplayName",
-  "createdFromLineMessageId",
   "storageUrl",
-  "storagePath",
-  "ocrRawText",
-  "ocrConfidence",
-  "duplicateStatus",
-  "possibleDuplicateIds",
+  "createdByDisplayName",
   "sheetSyncStatus",
   "sheetSyncError",
-  "parsedAt",
-  "normalizedAt"
+  "createdAt",
+  "updatedAt"
 ];
 
 const DEFAULT_OWN_COMPANY_HINTS = [
@@ -142,16 +133,49 @@ const PENDING_DELETE_CONFIRM_TTL_SEC = 600;
 const RECENT_RECEIPT_DUP_TTL_SEC = 1800;
 const LINE_PROFILE_CACHE_TTL_SEC = 21600;
 const FIRESTORE_EXPENSE_CACHE_TTL_MS = 15000;
+const MASTER_DATA_CACHE_TTL_MS = 300000;
 const RECORD_SOURCE_LINE_BOT = "LINE_BOT";
 const RECORD_STATUS_PENDING_REVIEW = "PENDING_REVIEW";
 const RECORD_STATUS_IMPORTED = "IMPORTED";
+const RECORD_STATUS_CONFIRMED = RECORD_STATUS_IMPORTED;
+const RECORD_STATUS_NEEDS_REVIEW = "NEEDS_REVIEW";
+const RECORD_STATUS_PARSE_INCOMPLETE = "PARSE_INCOMPLETE";
 const RECORD_STATUS_DELETED = "DELETED";
 const RECORD_STATUS_REJECTED = "REJECTED";
+const RECEIPT_JOB_STATUS_QUEUED = "QUEUED";
+const RECEIPT_JOB_STATUS_PROCESSING = "PROCESSING";
+const RECEIPT_JOB_STATUS_PROCESSING_PAUSED = "PROCESSING_PAUSED";
+const RECEIPT_JOB_STATUS_RETRY_PENDING = "RETRY_PENDING";
+const RECEIPT_JOB_STATUS_COMPLETED = "COMPLETED";
+const RECEIPT_JOB_STATUS_FAILED = "FAILED";
+const RECEIPT_JOB_STATUS_DUPLICATE_SKIPPED = "DUPLICATE_SKIPPED";
+const RECEIPT_JOB_DEFAULT_MAX_RETRY = 3;
+const RECEIPT_JOB_LOCK_TTL_MS = 10 * 60 * 1000;
+const RECEIPT_JOB_DEFAULT_BATCH_SIZE = 3;
+const RUNTIME_GUARD_DEFAULT_MAX_MS = 270000;
+const RUNTIME_GUARD_STOP_BUFFER_MS = 30000;
+const FACTORY_JOB_NAME = "โรงงาน";
+const FACTORY_COST_CENTER = "FACTORY";
+const PROJECT_SCOPE = "PROJECT";
+const FACTORY_SCOPE = "FACTORY";
+const SUMMARY_SCOPE_TYPE_FACTORY = "FACTORY";
+const SUMMARY_SCOPE_TYPE_JOB = "JOB";
+const SUMMARY_SCOPE_TYPE_UNKNOWN = "UNKNOWN";
+const SUMMARY_SCOPE_KEY_FACTORY = "FACTORY";
 const DUPLICATE_STATUS_UNIQUE = "UNIQUE";
 const DUPLICATE_STATUS_POSSIBLE_DUPLICATE = "POSSIBLE_DUPLICATE";
-const SHEET_SYNC_STATUS_PENDING = "pending";
-const SHEET_SYNC_STATUS_OK = "ok";
-const SHEET_SYNC_STATUS_ERROR = "error";
+const SHEET_SYNC_MODE_OFF = "OFF";
+const SHEET_SYNC_MODE_MANUAL = "MANUAL";
+const SHEET_SYNC_MODE_BATCH = "BATCH";
+const SHEET_SYNC_MODE_REALTIME = "REALTIME";
+const DEFAULT_SHEET_SYNC_MODE = SHEET_SYNC_MODE_BATCH;
+const SHEET_SYNC_STATUS_PENDING = "PENDING";
+const SHEET_SYNC_STATUS_PENDING_MANUAL = "PENDING_MANUAL";
+const SHEET_SYNC_STATUS_DISABLED = "DISABLED";
+const SHEET_SYNC_STATUS_NOT_REQUIRED = "NOT_REQUIRED";
+const SHEET_SYNC_STATUS_SYNCED = "SYNCED";
+const SHEET_SYNC_STATUS_OK = SHEET_SYNC_STATUS_SYNCED;
+const SHEET_SYNC_STATUS_ERROR = "ERROR";
 const FIRESTORE_EXPENSE_LIST_FIELD_MASKS = [
   "type",
   "date",
@@ -168,6 +192,13 @@ const FIRESTORE_EXPENSE_LIST_FIELD_MASKS = [
   "job",
   "jobId",
   "jobNameNormalized",
+  "costCenter",
+  "scope",
+  "scopeType",
+  "scopeKey",
+  "reviewNeeded",
+  "isFactoryExpense",
+  "factoryReviewNeeded",
   "vendorId",
   "workerId",
   "laborWeek",
@@ -185,6 +216,7 @@ const FIRESTORE_EXPENSE_LIST_FIELD_MASKS = [
   "createdFromLineMessageId",
   "storageUrl",
   "storagePath",
+  "fileHash",
   "ocrConfidence",
   "duplicateStatus",
   "possibleDuplicateIds",
@@ -269,16 +301,30 @@ remarks: ข้อความหมายเหตุ/Remarks ตรงตั�
 structured note "ค่าแรง_W1_เม.ย._ชื่องาน" → ส่วน1=หมวด, ส่วน2=week, ส่วน3=เดือน, ส่วน4=job
 `.trim();
 
+var CONFIG_RUNTIME_CACHE_ = {
+  loadedAt: 0,
+  value: null
+};
+
 function getConfig() {
+  const now = Date.now();
+  if (
+    CONFIG_RUNTIME_CACHE_.value &&
+    now - CONFIG_RUNTIME_CACHE_.loadedAt < MASTER_DATA_CACHE_TTL_MS
+  ) {
+    return CONFIG_RUNTIME_CACHE_.value;
+  }
+
   const props = PropertiesService.getScriptProperties();
 
-  return {
+  const config = {
     lineToken: getRequiredScriptProperty_(props, "LINE_TOKEN"),
     lineChannelSecret: getOptionalScriptProperty_(props, "LINE_CHANNEL_SECRET"),
     geminiKey: getRequiredScriptProperty_(props, "GEMINI_KEY"),
     firebaseProjectId: getRequiredScriptProperty_(props, "FIREBASE_PROJECT_ID"),
     firebaseStorageBucket: getOptionalScriptProperty_(props, "FIREBASE_STORAGE_BUCKET"),
-    sheetId: getRequiredScriptProperty_(props, "SHEET_ID"),
+    sheetId: getOptionalScriptProperty_(props, "SHEET_ID"),
+    sheetSyncMode: normalizeSheetSyncMode_(getOptionalScriptProperty_(props, "SHEET_SYNC_MODE")),
     webhookSecret: getOptionalScriptProperty_(props, "WEBHOOK_SECRET"),
     ownCompanyAliases: getListScriptProperty_(props, "OWN_COMPANY_ALIASES", DEFAULT_OWN_COMPANY_HINTS),
     jobAliases: getMapListScriptProperty_(props, "JOB_ALIASES").concat(DEFAULT_JOB_ALIASES),
@@ -286,6 +332,34 @@ function getConfig() {
     categoryAliases: getMapListScriptProperty_(props, "CATEGORY_ALIASES").concat(DEFAULT_CATEGORY_ALIASES),
     itemAliases: getMapListScriptProperty_(props, "ITEM_ALIASES").concat(DEFAULT_ITEM_ALIASES)
   };
+
+  CONFIG_RUNTIME_CACHE_ = {
+    loadedAt: now,
+    value: config
+  };
+
+  return config;
+}
+
+
+function clearConfigRuntimeCache_() {
+  CONFIG_RUNTIME_CACHE_ = {
+    loadedAt: 0,
+    value: null
+  };
+}
+
+function normalizeSheetSyncMode_(mode) {
+  const value = String(mode || DEFAULT_SHEET_SYNC_MODE).trim().toUpperCase();
+  if (
+    value === SHEET_SYNC_MODE_OFF ||
+    value === SHEET_SYNC_MODE_MANUAL ||
+    value === SHEET_SYNC_MODE_BATCH ||
+    value === SHEET_SYNC_MODE_REALTIME
+  ) {
+    return value;
+  }
+  return DEFAULT_SHEET_SYNC_MODE;
 }
 
 function getRequiredScriptProperty_(props, key) {

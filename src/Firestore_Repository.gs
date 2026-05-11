@@ -26,7 +26,11 @@ function firestoreRequest(method, path, payload) {
       options.payload = JSON.stringify(payload);
     }
 
-    const res = UrlFetchApp.fetch(url, options);
+    const res = safeUrlFetch(url, options, {
+      service: "firestore",
+      method: method,
+      action: path
+    });
     const statusCode = res.getResponseCode();
     const bodyText = res.getContentText();
 
@@ -73,6 +77,13 @@ function saveToFirestore(record) {
       job: { stringValue: String(safeRecord.job || "") },
       jobId: { stringValue: queryKeys.jobId },
       jobNameNormalized: { stringValue: queryKeys.jobNameNormalized },
+      costCenter: { stringValue: queryKeys.costCenter },
+      scope: { stringValue: queryKeys.scope },
+      scopeType: { stringValue: queryKeys.scopeType },
+      scopeKey: { stringValue: queryKeys.scopeKey },
+      reviewNeeded: { booleanValue: queryKeys.reviewNeeded },
+      isFactoryExpense: { booleanValue: queryKeys.isFactoryExpense },
+      factoryReviewNeeded: { booleanValue: queryKeys.factoryReviewNeeded },
       vendorId: { stringValue: queryKeys.vendorId },
       workerId: { stringValue: queryKeys.workerId },
       laborWeek: buildFirestoreLaborWeekField_(safeRecord.laborWeek),
@@ -90,6 +101,7 @@ function saveToFirestore(record) {
       createdFromLineMessageId: { stringValue: String(safeRecord.createdFromLineMessageId || safeRecord.sourceMessageId || "") },
       storageUrl: { stringValue: String(safeRecord.storageUrl || safeRecord.attachmentUrl || "") },
       storagePath: { stringValue: String(safeRecord.storagePath || safeRecord.attachmentPath || "") },
+      fileHash: { stringValue: String(safeRecord.fileHash || "") },
       ocrRawText: { stringValue: truncateText_(String(safeRecord.ocrRawText || ""), 20000) },
       ocrConfidence: { doubleValue: normalizeOcrConfidenceValue_(safeRecord.ocrConfidence) },
       duplicateStatus: { stringValue: queryKeys.duplicateStatus },
@@ -248,6 +260,13 @@ function getFirestoreRecordFromDocument_(doc) {
     job: getFirestoreString_(fields.job),
     jobId: getFirestoreString_(fields.jobId),
     jobNameNormalized: getFirestoreString_(fields.jobNameNormalized),
+    costCenter: getFirestoreString_(fields.costCenter),
+    scope: getFirestoreString_(fields.scope),
+    scopeType: getFirestoreString_(fields.scopeType),
+    scopeKey: getFirestoreString_(fields.scopeKey),
+    reviewNeeded: getFirestoreBoolean_(fields.reviewNeeded),
+    isFactoryExpense: getFirestoreBoolean_(fields.isFactoryExpense),
+    factoryReviewNeeded: getFirestoreBoolean_(fields.factoryReviewNeeded),
     vendorId: getFirestoreString_(fields.vendorId),
     workerId: getFirestoreString_(fields.workerId),
     laborWeek: getFirestoreString_(fields.laborWeek),
@@ -265,6 +284,7 @@ function getFirestoreRecordFromDocument_(doc) {
     createdFromLineMessageId: getFirestoreString_(fields.createdFromLineMessageId),
     storageUrl: getFirestoreString_(fields.storageUrl),
     storagePath: getFirestoreString_(fields.storagePath),
+    fileHash: getFirestoreString_(fields.fileHash),
     ocrRawText: getFirestoreString_(fields.ocrRawText),
     ocrConfidence: getFirestoreNumber(fields.ocrConfidence),
     duplicateStatus: getFirestoreString_(fields.duplicateStatus),
@@ -293,17 +313,35 @@ function deleteLatestExpenseRecord_(sourceKey, actor) {
 
 
 function deleteExpenseRecordByDocumentName_(documentName, actor) {
-  const relativePath = getFirestoreRelativePath_(documentName);
-  if (!relativePath) {
-    return null;
-  }
-
-  const doc = firestoreRequest("get", relativePath);
+  const doc = getExpenseDocumentByIdOrName_(documentName);
   if (!doc || !doc.name) {
     return null;
   }
 
   return deleteExpenseDocument_(doc, actor || {});
+}
+
+
+function getExpenseDocumentByIdOrName_(transactionId) {
+  const input = String(transactionId || "").trim();
+  if (!input) {
+    return null;
+  }
+
+  const relativePath = getFirestoreRelativePath_(
+    input.indexOf("/") === -1 ? `expenses/${input}` : input
+  );
+  if (!relativePath) {
+    return null;
+  }
+
+  try {
+    const doc = firestoreRequest("get", relativePath);
+    return doc && doc.name ? doc : null;
+  } catch (err) {
+    logError("getExpenseDocumentByIdOrName_.error", err);
+    return null;
+  }
 }
 
 
@@ -394,6 +432,13 @@ function updateFirestoreDocument_(record) {
     job: { stringValue: String(safeRecord.job || "") },
     jobId: { stringValue: queryKeys.jobId },
     jobNameNormalized: { stringValue: queryKeys.jobNameNormalized },
+    costCenter: { stringValue: queryKeys.costCenter },
+    scope: { stringValue: queryKeys.scope },
+    scopeType: { stringValue: queryKeys.scopeType },
+    scopeKey: { stringValue: queryKeys.scopeKey },
+    reviewNeeded: { booleanValue: queryKeys.reviewNeeded },
+    isFactoryExpense: { booleanValue: queryKeys.isFactoryExpense },
+    factoryReviewNeeded: { booleanValue: queryKeys.factoryReviewNeeded },
     vendorId: { stringValue: queryKeys.vendorId },
     workerId: { stringValue: queryKeys.workerId },
     laborWeek: buildFirestoreLaborWeekField_(safeRecord.laborWeek),
@@ -404,11 +449,15 @@ function updateFirestoreDocument_(record) {
     attachmentUrl: { stringValue: String(safeRecord.attachmentUrl || "") },
     attachmentPath: { stringValue: String(safeRecord.attachmentPath || "") },
     attachmentMimeType: { stringValue: String(safeRecord.attachmentMimeType || "") },
+    storageUrl: { stringValue: String(safeRecord.storageUrl || safeRecord.attachmentUrl || "") },
+    storagePath: { stringValue: String(safeRecord.storagePath || safeRecord.attachmentPath || "") },
+    fileHash: { stringValue: String(safeRecord.fileHash || "") },
     status: { stringValue: queryKeys.status },
     createdByLineUserId: { stringValue: queryKeys.createdByLineUserId },
     duplicateStatus: { stringValue: queryKeys.duplicateStatus },
     fingerprint: { stringValue: queryKeys.fingerprint },
     sheetSyncStatus: { stringValue: queryKeys.sheetSyncStatus },
+    sheetSyncError: { stringValue: String(safeRecord.sheetSyncError || "") },
     occurredAt: { stringValue: queryKeys.occurredAt },
     createdAt: { stringValue: queryKeys.createdAt },
     updatedAt: { stringValue: queryKeys.updatedAt }
@@ -562,8 +611,17 @@ function updateLatestExpenseRecord_(sourceKey, fieldText, rawValue, actor) {
     }
   }
 
+  const sheetSyncMode = getSheetSyncMode();
+  newRecord.sheetSyncStatus = getInitialSheetSyncStatusForMode_(sheetSyncMode);
+  newRecord.sheetSyncError = "";
+
   updateFirestoreDocument_(newRecord);
-  const sheetUpdated = updateExpenseInSheet_(oldRecord, newRecord);
+  const sheetSync = handleSheetSyncAfterFirestoreSave_(newRecord.documentName, {
+    target: "update_latest",
+    actorLineUserId: actor && actor.lineUserId || "",
+    recordStatus: newRecord.status
+  });
+  const sheetUpdated = !!(sheetSync && sheetSync.ok && !sheetSync.skipped);
   logUpdateExpense_(oldRecord, newRecord, {
     recordId: latestDoc && latestDoc.name || "",
     lineUserId: actor && actor.lineUserId || ""
@@ -574,7 +632,8 @@ function updateLatestExpenseRecord_(sourceKey, fieldText, rawValue, actor) {
     oldRecord: oldRecord,
     record: newRecord,
     field: field,
-    sheetUpdated: sheetUpdated
+    sheetUpdated: sheetUpdated,
+    sheetSync: sheetSync
   };
 }
 

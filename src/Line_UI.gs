@@ -30,7 +30,7 @@ function sendLineMessages(replyToken, messages) {
       messages: messages
     };
 
-    const res = UrlFetchApp.fetch(url, {
+    const res = safeUrlFetch(url, {
       method: "post",
       contentType: "application/json",
       headers: {
@@ -38,6 +38,10 @@ function sendLineMessages(replyToken, messages) {
       },
       payload: JSON.stringify(payload),
       muteHttpExceptions: true
+    }, {
+      service: "line",
+      action: "reply",
+      method: "post"
     });
 
     const statusCode = res.getResponseCode();
@@ -141,12 +145,16 @@ function getLineDisplayName_(source) {
       url = `https://api.line.me/v2/bot/room/${encodeURIComponent(safeSource.roomId)}/member/${encodeURIComponent(lineUserId)}`;
     }
 
-    const res = UrlFetchApp.fetch(url, {
+    const res = safeUrlFetch(url, {
       method: "get",
       headers: {
         Authorization: `Bearer ${config.lineToken}`
       },
       muteHttpExceptions: true
+    }, {
+      service: "line",
+      action: "profile",
+      method: "get"
     });
 
     const statusCode = res.getResponseCode();

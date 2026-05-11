@@ -11,7 +11,7 @@ function fetchLineFileAsBase64(event) {
     const mimeType = isImage ? "image/jpeg" : "application/pdf";
     const originalFileName = String(event.message.fileName || "").trim();
 
-    const res = UrlFetchApp.fetch(
+    const res = safeUrlFetch(
       `https://api-data.line.me/v2/bot/message/${messageId}/content`,
       {
         method: "get",
@@ -19,6 +19,11 @@ function fetchLineFileAsBase64(event) {
           Authorization: `Bearer ${config.lineToken}`
         },
         muteHttpExceptions: true
+      },
+      {
+        service: "line",
+        action: "download_file",
+        method: "get"
       }
     );
 
@@ -30,17 +35,28 @@ function fetchLineFileAsBase64(event) {
     const blob = res.getBlob();
     const bytes = blob.getBytes();
     const base64Data = Utilities.base64Encode(bytes);
+    const fileHash = buildBytesSha256Hex_(bytes);
 
     return {
       mimeType: mimeType,
       base64Data: base64Data,
       bytes: bytes,
+      fileHash: fileHash,
       originalFileName: originalFileName,
       fileExtension: getFileExtensionFromMimeType_(mimeType, originalFileName)
     };
   } catch (err) {
     throw new Error("โหลดไฟล์จาก LINE ไม่สำเร็จ: " + err.message);
   }
+}
+
+
+function buildBytesSha256Hex_(bytes) {
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes || []);
+  return digest.map(function(byteValue) {
+    const normalized = byteValue < 0 ? byteValue + 256 : byteValue;
+    return (`0${normalized.toString(16)}`).slice(-2);
+  }).join("");
 }
 
 
@@ -120,11 +136,15 @@ function analyzeReceiptWithGemini(base64Data, mimeType) {
         }
       };
 
-      const res = UrlFetchApp.fetch(url, {
+      const res = safeUrlFetch(url, {
         method: "post",
         contentType: "application/json",
         payload: JSON.stringify(payload),
         muteHttpExceptions: true
+      }, {
+        service: "gemini",
+        action: "generateContent",
+        method: "post"
       });
 
       const statusCode = res.getResponseCode();

@@ -56,7 +56,7 @@ function buildReceiptAttachmentPath_(fileData, meta) {
 
 function uploadReceiptAttachmentToBucket_(bucket, objectName, fileData) {
   const url = `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(objectName)}`;
-  const res = UrlFetchApp.fetch(url, {
+  const res = safeUrlFetch(url, {
     method: "post",
     muteHttpExceptions: true,
     contentType: String(fileData.mimeType || "application/octet-stream"),
@@ -64,6 +64,10 @@ function uploadReceiptAttachmentToBucket_(bucket, objectName, fileData) {
       Authorization: `Bearer ${ScriptApp.getOAuthToken()}`
     },
     payload: fileData.bytes
+  }, {
+    service: "storage",
+    action: "upload",
+    method: "post"
   });
 
   const statusCode = res.getResponseCode();
@@ -75,7 +79,7 @@ function uploadReceiptAttachmentToBucket_(bucket, objectName, fileData) {
 
 function setFirebaseDownloadToken_(bucket, objectName, token) {
   const url = `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`;
-  const res = UrlFetchApp.fetch(url, {
+  const res = safeUrlFetch(url, {
     method: "patch",
     contentType: "application/json",
     muteHttpExceptions: true,
@@ -87,6 +91,10 @@ function setFirebaseDownloadToken_(bucket, objectName, token) {
         firebaseStorageDownloadTokens: token
       }
     })
+  }, {
+    service: "storage",
+    action: "set_download_token",
+    method: "patch"
   });
 
   const statusCode = res.getResponseCode();
@@ -114,12 +122,16 @@ function deleteReceiptAttachmentFromFirebase_(attachmentPath) {
   bucketCandidates.forEach(function(bucket) {
     try {
       const url = `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`;
-      const res = UrlFetchApp.fetch(url, {
+      const res = safeUrlFetch(url, {
         method: "delete",
         muteHttpExceptions: true,
         headers: {
           Authorization: `Bearer ${ScriptApp.getOAuthToken()}`
         }
+      }, {
+        service: "storage",
+        action: "delete",
+        method: "delete"
       });
       const statusCode = res.getResponseCode();
       if (statusCode >= 200 && statusCode < 300) {

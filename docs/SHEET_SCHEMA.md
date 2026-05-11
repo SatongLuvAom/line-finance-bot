@@ -1,5 +1,7 @@
 # Google Sheets Schema
 
+Google Sheets is a report/export layer only. Firestore is the source of truth for all bot commands, summaries, edits, deletes, duplicate checks, and sync status.
+
 The bot writes to spreadsheet ID from Script Property `SHEET_ID`.
 
 ## Sheet: `Expenses`
@@ -8,37 +10,41 @@ The header is created or repaired automatically by `ensureExpenseSheetHeader_()`
 
 | Column | Header | Description |
 | --- | --- | --- |
-| A | `type` | `expense` or `income` |
+| A | `transactionId` | Firestore document ID |
 | B | `date` | Transaction date in `YYYY-MM-DD` |
-| C | `merchant` | Shop, receiver, payer, or account name |
-| D | `category` | Normalized category |
-| E | `job` | Project/job name |
-| F | `amount` | Final amount |
-| G | `items` | Short item/service summary |
-| H | `note` | Important note/remark |
-| I | `laborWeek` | Labor week number |
-| J | `laborMonth` | Thai labor month |
-| K | `attachmentUrl` | Firebase Storage download URL |
-| L | `attachmentPath` | Firebase Storage object path |
-| M | `attachmentMimeType` | Stored attachment MIME type |
-| N | `source` | Data source, currently `LINE_BOT` |
-| O | `status` | `IMPORTED` or `PENDING_REVIEW` |
-| P | `createdByLineUserId` | LINE user ID that created the record |
-| Q | `createdByDisplayName` | LINE display name when profile lookup succeeds |
-| R | `createdFromLineMessageId` | Original LINE message ID |
-| S | `storageUrl` | Canonical Firebase Storage download URL |
-| T | `storagePath` | Canonical Firebase Storage object path |
-| U | `ocrRawText` | Raw/summarized OCR text for debugging |
-| V | `ocrConfidence` | OCR confidence from `0` to `1` |
-| W | `duplicateStatus` | `UNIQUE` or `POSSIBLE_DUPLICATE` |
-| X | `possibleDuplicateIds` | Comma-separated possible duplicate document IDs |
-| Y | `sheetSyncStatus` | `ok` or `error` |
-| Z | `sheetSyncError` | Safe Sheet sync error message |
-| AA | `parsedAt` | ISO timestamp after Gemini JSON parse |
-| AB | `normalizedAt` | ISO timestamp after normalizer finished |
+| C | `type` | `expense` or `income` |
+| D | `job` | Normalized project/job name |
+| E | `category` | Normalized category |
+| F | `merchant` | Shop, receiver, payer, or account name |
+| G | `payer` | Sender/payer when available |
+| H | `amount` | Final amount |
+| I | `status` | Firestore transaction status |
+| J | `items` | Short item/service summary |
+| K | `note` | Important note/remark |
+| L | `laborWeek` | Labor week number |
+| M | `laborMonth` | Thai labor month |
+| N | `storageUrl` | Firebase Storage download URL |
+| O | `createdByDisplayName` | LINE display name when available |
+| P | `sheetSyncStatus` | `PENDING`, `PENDING_MANUAL`, `DISABLED`, `NOT_REQUIRED`, `SYNCED`, or `ERROR` |
+| Q | `sheetSyncError` | Safe Sheet sync error JSON/string |
+| R | `createdAt` | Firestore create timestamp |
+| S | `updatedAt` | Firestore update timestamp |
+
+## Excluded Heavy Fields
+
+These fields must not be written to Google Sheets:
+
+```text
+ocrRawText
+geminiRawResponse
+rawFileData
+storageMetadata
+auditDetails
+internal debug log
+```
 
 ## Notes
 
-- Sheet rows are appended after Firestore save.
-- Edit/delete helpers attempt to update/delete the matching row by comparing the stored record fields.
-- Firestore is the primary source of truth. Google Sheets is the operational reporting surface.
+- Sheet rows are upserted by `transactionId`, not used as primary storage.
+- If Sheet sync fails, Firestore remains saved and `sheetSyncStatus=ERROR`.
+- Commands must read from Firestore only.

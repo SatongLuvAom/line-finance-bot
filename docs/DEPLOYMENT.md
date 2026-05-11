@@ -30,11 +30,12 @@ Required:
 - `LINE_TOKEN`
 - `GEMINI_KEY`
 - `FIREBASE_PROJECT_ID`
-- `SHEET_ID`
+- `SHEET_ID` unless `SHEET_SYNC_MODE=OFF`
 
 Recommended:
 
 - `FIREBASE_STORAGE_BUCKET`
+- `SHEET_SYNC_MODE` (`OFF`, `MANUAL`, `BATCH`, `REALTIME`; default `BATCH`)
 - `WEBHOOK_SECRET`
 - `OWN_COMPANY_ALIASES`
 - `JOB_ALIASES`
@@ -92,12 +93,22 @@ Optional development:
 3. Enable Firebase Storage.
 4. Set `FIREBASE_STORAGE_BUCKET` to the bucket name, for example `project-id.appspot.com`.
 5. Apps Script uses `ScriptApp.getOAuthToken()` with Cloud Platform scope.
+6. Create the composite indexes listed in `firestore.indexes.json`.
+7. After deploying the summary scope refactor, run `backfillSummaryScopeKeys(100)` repeatedly until `hasNextPage=false`.
 
 ## Google Sheets Setup
 
 1. Create a spreadsheet.
 2. Copy the spreadsheet ID into `SHEET_ID`.
-3. The bot will create or repair the `Expenses` sheet header automatically.
+3. Set `SHEET_SYNC_MODE=BATCH` for the recommended production default.
+4. The bot will create or repair the `Expenses` sheet header automatically.
+5. Remember: Sheets is a report/export layer only. Firestore is the source of truth.
+
+To pause Sheet writes without stopping the bot, set:
+
+```text
+SHEET_SYNC_MODE=OFF
+```
 
 ## clasp Usage
 
@@ -109,3 +120,27 @@ clasp deploy
 ```
 
 Do not commit `.clasp.json` if it exposes project information you do not want shared.
+# Queue Worker Deployment
+
+After pushing Apps Script source, create or verify a time-driven trigger:
+
+| Function | Trigger | Purpose |
+| --- | --- | --- |
+| `processPendingReceiptJobs` | Time-driven, every 1-5 minutes | Processes queued LINE image/PDF receipt jobs |
+| `processPendingSheetSync` | Optional time-driven trigger | Syncs pending Sheet report rows when using `BATCH` mode |
+
+Manual first-run test:
+
+```javascript
+processPendingReceiptJobs(1)
+```
+
+Then send a slip in LINE and confirm:
+
+1. LINE replies immediately with queued message.
+2. `receipt_jobs` gets a `QUEUED` document.
+3. Worker changes the job to `COMPLETED` or `NEEDS_REVIEW`/`FAILED` path.
+4. `expenses` receives the transaction.
+5. `processLogs` receives execution metrics.
+
+If the queue fails to create, webhook falls back to inline receipt processing for compatibility.

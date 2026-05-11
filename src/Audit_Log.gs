@@ -5,17 +5,35 @@
 
 function writeAuditLog_(entry) {
   try {
+    const safeEntry = entry || {};
+    const safeErrorMessage = safeEntry.errorMessage
+      ? buildUserFriendlyErrorMessage_(safeEntry.errorMessage)
+      : "";
     const payload = {
       fields: {
         timestamp: { stringValue: new Date().toISOString() },
-        traceId: { stringValue: String(entry && entry.traceId || "") },
-        action: { stringValue: String(entry && entry.action || "") },
-        lineUserId: { stringValue: String(entry && entry.lineUserId || "") },
-        recordId: { stringValue: String(entry && entry.recordId || "") },
-        oldValue: { stringValue: JSON.stringify(entry && entry.oldValue || {}) },
-        newValue: { stringValue: JSON.stringify(entry && entry.newValue || {}) },
-        status: { stringValue: String(entry && entry.status || "ok") },
-        errorMessage: { stringValue: String(entry && entry.errorMessage || "") }
+        traceId: { stringValue: String(safeEntry.traceId || "") },
+        action: { stringValue: String(safeEntry.action || "") },
+        errorId: { stringValue: String(safeEntry.errorId || "") },
+        commandName: { stringValue: String(safeEntry.commandName || "") },
+        inputText: { stringValue: truncateText_(String(safeEntry.inputText || ""), 500) },
+        functionName: { stringValue: String(safeEntry.functionName || "") },
+        queryName: { stringValue: String(safeEntry.queryName || "") },
+        transactionId: { stringValue: String(safeEntry.transactionId || "") },
+        actorLineUserId: { stringValue: String(safeEntry.actorLineUserId || safeEntry.lineUserId || "") },
+        sheetSyncMode: { stringValue: String(safeEntry.sheetSyncMode || "") },
+        beforeStatus: { stringValue: String(safeEntry.beforeStatus || "") },
+        afterStatus: { stringValue: String(safeEntry.afterStatus || "") },
+        safeError: { stringValue: String(safeEntry.safeError || "") },
+        safeErrorMessage: { stringValue: truncateText_(String(safeEntry.safeErrorMessage || safeEntry.safeError || ""), 900) },
+        stackTrace: { stringValue: truncateText_(String(safeEntry.stackTrace || ""), 5000) },
+        createdAt: { stringValue: String(safeEntry.createdAt || new Date().toISOString()) },
+        lineUserId: { stringValue: String(safeEntry.lineUserId || "") },
+        recordId: { stringValue: String(safeEntry.recordId || "") },
+        oldValue: { stringValue: truncateText_(JSON.stringify(safeEntry.oldValue || {}), 30000) },
+        newValue: { stringValue: truncateText_(JSON.stringify(safeEntry.newValue || {}), 30000) },
+        status: { stringValue: String(safeEntry.status || "ok") },
+        errorMessage: { stringValue: truncateText_(safeErrorMessage, 900) }
       }
     };
     firestoreRequest("post", "auditLogs", payload);
@@ -76,6 +94,24 @@ function logAiParsingResult_(traceId, result, status, errorMessage) {
     newValue: result || {},
     status: status || "ok",
     errorMessage: errorMessage || ""
+  });
+}
+
+function logSheetSyncAudit_(action, meta) {
+  const safeMeta = meta || {};
+  writeAuditLog_({
+    action: String(action || ""),
+    transactionId: String(safeMeta.transactionId || ""),
+    actorLineUserId: String(safeMeta.actorLineUserId || safeMeta.lineUserId || ""),
+    lineUserId: String(safeMeta.actorLineUserId || safeMeta.lineUserId || ""),
+    recordId: String(safeMeta.transactionId || safeMeta.recordId || ""),
+    sheetSyncMode: String(safeMeta.sheetSyncMode || ""),
+    beforeStatus: String(safeMeta.beforeStatus || ""),
+    afterStatus: String(safeMeta.afterStatus || ""),
+    safeError: String(safeMeta.safeError || ""),
+    createdAt: new Date().toISOString(),
+    status: String(safeMeta.status || "ok"),
+    errorMessage: String(safeMeta.safeError || "")
   });
 }
 

@@ -52,8 +52,7 @@ function routeLineEvent_(event, context) {
 
     replyText(event.replyToken, "รองรับเฉพาะข้อความ รูปภาพ และไฟล์ PDF ครับ");
   } catch (err) {
-    logError_("routeLineEvent.error", err);
-    safeReplyError_(event && event.replyToken, "เกิดข้อผิดพลาดระหว่างประมวลผล");
+    handleLineEventError_(err, event, context || {}, {});
   }
 }
 
@@ -62,15 +61,15 @@ function processLineEvent(event) {
 }
 
 function routeTextCommand_(event, text, context) {
-  return handleTextMessage(event);
+  return handleTextMessage(event, context || {});
 }
 
 function routeImageMessage_(event, context) {
-  return handleReceiptMessage_(event, context || {});
+  return enqueueReceiptMessage_(event, context || {});
 }
 
 function routeFileMessage_(event, context) {
-  return handleReceiptMessage_(event, context || {});
+  return enqueueReceiptMessage_(event, context || {});
 }
 
 function routePostback_(event, context) {
