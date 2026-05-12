@@ -86,13 +86,16 @@ function createReceiptFlex(data) {
               flexRow("หมวด", data.category),
               flexRow("งาน", data.job),
               flexRow("รายการ", getReceiptItemPreview_(data.items)),
+              data.parseMethod ? flexRow("วิธีอ่าน", getReceiptParseMethodLabel_(data.parseMethod)) : null,
+              data.parserConfidence ? flexRow("ความมั่นใจ", Math.round(Number(data.parserConfidence || 0) * 100) + "%") : null,
+              data.missingFields && data.missingFields.length ? flexRow("ข้อมูลที่ขาด", data.missingFields.join(", ")) : null,
               {
                 type: "separator",
                 margin: "md",
                 color: "#E5E7EB"
               },
               flexRow("หมายเหตุ", data.note || "-")
-            ]
+            ].filter(Boolean)
           }
         ]
       },
@@ -115,11 +118,153 @@ function createReceiptFlex(data) {
   };
 }
 
+function getReceiptParseMethodLabel_(parseMethod) {
+  const method = String(parseMethod || "").trim();
+  const labels = {
+    TEXT_RULE: "Rule",
+    CAPTION_RULE: "Caption Rule",
+    OCR_RULE: "OCR Rule",
+    QR_RULE: "QR Rule",
+    GEMINI: "Gemini",
+    MANUAL: "Manual"
+  };
+  return labels[method] || method || "-";
+}
+
 
 function getReceiptItemPreview_(items) {
   const text = String(items || "-");
   const match = text.match(/\[(.*?)\]/);
   return match ? match[0] : text;
+}
+
+function buildReceiptSavedFlexCard(transaction) {
+  try {
+    const record = transaction || {};
+    const typeLabel = getReceiptTransactionTypeLabel_(record);
+    const status = String(record.status || RECORD_STATUS_IMPORTED);
+    const isIncomplete = status === RECORD_STATUS_PARSE_INCOMPLETE;
+    const needsReview = status === RECORD_STATUS_NEEDS_REVIEW || status === RECORD_STATUS_PENDING_REVIEW;
+    const title = isIncomplete
+      ? "อ่านสลิปได้ไม่ครบ"
+      : (needsReview ? "อ่านสลิปแล้ว รอตรวจสอบ" : "บันทึกสลิปเรียบร้อยแล้ว");
+    const headerColor = isIncomplete ? "#B42318" : (needsReview ? "#B45309" : "#0F766E");
+    const footerText = isIncomplete || needsReview
+      ? "รายการนี้ยังไม่ถูกนับในสรุปงบจนกว่าจะแก้ไขและยืนยันข้อมูล"
+      : "Firestore เป็นฐานข้อมูลหลัก และ Sheet จะ sync ตามโหมดที่ตั้งไว้";
+
+    const missingFields = normalizeStringList_(record.missingFields || []);
+    const bodyContents = [
+      flexRow("ประเภท", typeLabel),
+      flexRow("ยอดเงิน", "฿" + Number(record.amount || 0).toLocaleString(), true),
+      flexRow("หมวด", record.category || record.categoryName || "ไม่ระบุหมวด"),
+      flexRow("งาน", record.job || record.jobName || "-"),
+      flexRow("ร้าน/ผู้รับ", record.merchant || record.vendorName || "ไม่ระบุร้าน"),
+      flexRow("วันที่", record.date || record.occurredAt || "ไม่ระบุวันที่")
+    ];
+
+    if (record.parseMethod) {
+      bodyContents.push(flexRow("วิธีอ่าน", getReceiptParseMethodLabel_(record.parseMethod)));
+    }
+    if (record.parserConfidence) {
+      bodyContents.push(flexRow("ความมั่นใจ", Math.round(Number(record.parserConfidence || 0) * 100) + "%"));
+    }
+    if (missingFields.length) {
+      bodyContents.push(flexRow("ข้อมูลที่ขาด", missingFields.join(", ")));
+    }
+    if (record.note) {
+      bodyContents.push(flexRow("หมายเหตุ", record.note));
+    }
+
+    return {
+      type: "flex",
+      altText: truncateText_(title + " ฿" + Number(record.amount || 0).toLocaleString(), 300),
+      contents: {
+        type: "bubble",
+        size: "mega",
+        header: {
+          type: "box",
+          layout: "vertical",
+          backgroundColor: headerColor,
+          paddingAll: "20px",
+          paddingBottom: "15px",
+          contents: [
+            { type: "text", text: "YUPPIE FINANCE", color: "#ECFEFF", size: "xs", weight: "bold" },
+            { type: "text", text: title, weight: "bold", size: "xl", color: "#FFFFFF", margin: "md", wrap: true }
+          ]
+        },
+        body: {
+          type: "box",
+          layout: "vertical",
+          spacing: "md",
+          paddingAll: "20px",
+          contents: [
+            {
+              type: "box",
+              layout: "vertical",
+              spacing: "sm",
+              backgroundColor: "#F8FAFC",
+              paddingAll: "16px",
+              cornerRadius: "10px",
+              borderColor: "#E2E8F0",
+              borderWidth: "1px",
+              contents: bodyContents
+            }
+          ]
+        },
+        footer: {
+          type: "box",
+          layout: "vertical",
+          paddingAll: "18px",
+          paddingTop: "0px",
+          contents: [
+            { type: "text", text: footerText, color: "#64748B", size: "xs", align: "center", wrap: true }
+          ]
+        }
+      }
+    };
+  } catch (err) {
+    logError_("buildReceiptSavedFlexCard.error", err);
+    return buildReceiptSavedPlainText(transaction);
+  }
+}
+
+
+function buildReceiptSavedPlainText(transaction) {
+  const record = transaction || {};
+  const status = String(record.status || RECORD_STATUS_IMPORTED);
+  const title = status === RECORD_STATUS_PARSE_INCOMPLETE
+    ? "อ่านสลิปได้ไม่ครบ"
+    : ((status === RECORD_STATUS_NEEDS_REVIEW || status === RECORD_STATUS_PENDING_REVIEW)
+      ? "อ่านสลิปแล้ว รอตรวจสอบ"
+      : "บันทึกสลิปเรียบร้อยแล้ว");
+
+  return {
+    type: "text",
+    text: [
+      title,
+      "────────────",
+      "ประเภท: " + getReceiptTransactionTypeLabel_(record),
+      "ยอดเงิน: ฿" + Number(record.amount || 0).toLocaleString(),
+      "หมวด: " + String(record.category || record.categoryName || "ไม่ระบุหมวด"),
+      "งาน: " + String(record.job || record.jobName || "-"),
+      "ร้าน/ผู้รับ: " + String(record.merchant || record.vendorName || "ไม่ระบุร้าน"),
+      "วันที่: " + String(record.date || record.occurredAt || "ไม่ระบุวันที่"),
+      record.missingFields && normalizeStringList_(record.missingFields).length
+        ? "ข้อมูลที่ขาด: " + normalizeStringList_(record.missingFields).join(", ")
+        : "",
+      status === RECORD_STATUS_PARSE_INCOMPLETE || status === RECORD_STATUS_NEEDS_REVIEW || status === RECORD_STATUS_PENDING_REVIEW
+        ? "รายการนี้ยังไม่ถูกนับในสรุปงบ"
+        : ""
+    ].filter(Boolean).join("\n")
+  };
+}
+
+
+function getReceiptTransactionTypeLabel_(record) {
+  const safeRecord = record || {};
+  if (String(safeRecord.category || "") === LABOR_CATEGORY_NAME) return "ค่าแรง";
+  return String(safeRecord.type || "expense") === "income" ? "รายรับ" : "รายจ่าย";
 }
 
 

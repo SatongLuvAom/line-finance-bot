@@ -46,6 +46,8 @@ These queries are for worker/admin operations, not budget summary commands.
 | Queue status | `getReceiptJobsByStatus_()` | `status` | none | 50 | Runs once per queue status |
 | Pending worker jobs | `getPendingReceiptJobs_()` | `status=QUEUED`, `RETRY_PENDING`, `PROCESSING_PAUSED` | none | 3 default | Worker intentionally avoids orderBy to reduce composite index needs |
 | Existing queued job | `getReceiptJobByLineMessageId_()` | `lineMessageId` | none | 1 | Used before creating duplicate queue jobs |
+| Notification failed/skipped | `getReceiptNotificationJobsByStatus_()` | `notificationStatus` | none | 10 | Admin diagnostics only |
+| Notification usage today | `queryReceiptNotificationLogs_()` | `processName=receipt_notification` | none | 500 | Filters today by timestamp prefix in memory after bounded query |
 
 Summary commands remain unchanged:
 

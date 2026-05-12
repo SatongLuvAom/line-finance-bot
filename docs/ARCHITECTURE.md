@@ -18,6 +18,26 @@ Factory expenses use `scopeType=FACTORY`, `scopeKey=FACTORY`, and current `month
 
 Receipt/image/PDF processing is the only flow that may use `sourceMessageId`, `fileHash`, `fingerprint`, OCR, or Gemini. Text summary commands must never call duplicate-check or file-processing functions.
 
+## Rule-First AI Flow
+
+Receipt workers now parse deterministic text/caption patterns before using Gemini. `AI_READ_MODE` controls AI usage:
+
+```text
+OFF           = never call Gemini; incomplete data becomes PARSE_INCOMPLETE
+FALLBACK_ONLY = call Gemini only when rule parsing cannot auto-confirm; recommended
+ALWAYS        = always call Gemini after duplicate checks
+```
+
+Rule parsers return `parsedData`, `confidence`, `missingFields`, `warnings`, and `parseMethod`. The confidence gate writes:
+
+```text
+confidence >= 0.85 + required fields complete -> IMPORTED
+confidence 0.60-0.84 or uncertain scope/conflict -> NEEDS_REVIEW
+confidence < 0.60 or missing amount/date/type -> PARSE_INCOMPLETE
+```
+
+Required fields for auto-save are `amount`, `type`, `date`, valid `scopeType/scopeKey`, and passed duplicate checks. If scope is unknown, the bot does not guess a project and stores the transaction for review.
+
 See `docs/FIRESTORE_QUERY_CATALOG.md` for the approved query shapes and required indexes.
 
 ## Flow
@@ -29,6 +49,7 @@ flowchart TD
   Main --> Router["Router.gs"]
   Router --> Commands["Command_Handler.gs"]
   Router --> Receipt["Receipt_Service.gs"]
+  Receipt --> Rules["Rule_Parser_Service.gs"]
   Receipt --> AI["AI_Engine.gs"]
   AI --> Normalizer["AI_Normalizer.gs"]
   Normalizer --> Bank["AI_BankParser.gs"]
@@ -130,8 +151,11 @@ flowchart TD
   C --> D["Compute SHA-256 fileHash"]
   D --> E["Query Firestore by fileHash"]
   E -->|Duplicate| R2["Reply duplicate and skip Gemini"]
-  E -->|New| F["Gemini OCR"]
-  F --> G["Parse and normalize"]
+  E -->|New| F["Rule parser + confidence gate"]
+  F -->|High confidence| G1["Skip Gemini"]
+  F -->|Needs fallback| G2["Gemini OCR"]
+  G1 --> G["Normalize"]
+  G2 --> G["Normalize"]
   G --> H["Query fingerprint / possible duplicate"]
   H --> I["Upload attachment to Firebase Storage"]
   I --> J["Write Firestore source of truth"]
@@ -143,6 +167,34 @@ flowchart TD
 `processLogs` stores stage timings only. It must not store tokens, raw files, or full OCR payloads.
 
 Command errors use the same safe logging rule. The user-facing LINE reply contains only an `ERR-xxxx` reference ID, while `auditLogs` and `processLogs` store redacted debugging fields such as `commandName`, `functionName`, `queryName`, `safeErrorMessage`, and `stackTrace`.
+
+## Silent Receipt Notification Flow
+
+Receipt image/PDF submission now uses **Silent Receive + Done Flex Card**.
+
+This supersedes any older queue-ack behavior:
+
+```text
+LINE image/file/pdf event
+  -> doPost verifies and creates receipt_jobs
+  -> no "received file" reply when RECEIPT_ACK_ENABLED=false
+  -> worker processes receipt_jobs
+  -> worker writes Firestore transaction
+  -> worker sends exactly one done/duplicate/incomplete/error notification
+```
+
+Notification delivery uses:
+
+```text
+RECEIPT_DONE_NOTIFY_MODE=REPLY_THEN_PUSH
+replyMessage if replyToken is still usable within 55 seconds
+pushMessage only when replyToken is expired/unavailable and push is enabled
+```
+
+The job field `notificationStatus=SENT` prevents duplicate done messages for the same receipt job. Text commands are not affected by silent mode and still reply normally.
+
+Notification logs are written to `processLogs` with `processName=receipt_notification`. Logs store method/status/reason/message type only and never store the full `replyToken`, LINE token, API key, or secrets.
+
 # Runtime Queue Architecture
 
 Receipt image/PDF processing now uses a lightweight webhook plus Firestore queue model.
@@ -155,7 +207,7 @@ Receipt image/PDF processing now uses a lightweight webhook plus Firestore queue
 2. Route text commands directly to `handleTextMessage()`.
 3. For LINE image/PDF/file events, run only line-message duplicate checks.
 4. Create a `receipt_jobs` document with `status=QUEUED`.
-5. Reply with “รับไฟล์แล้ว กำลังประมวลผล”.
+5. Do not send a queued acknowledgement when `RECEIPT_ACK_ENABLED=false`.
 6. End the webhook request.
 
 The webhook must not run Gemini OCR, Firebase Storage upload, large PDF processing, batch Sheet sync, or long loops.
@@ -170,11 +222,14 @@ Worker flow:
 2. Load up to 3 queued/retry jobs by default.
 3. Lock each job as `PROCESSING`.
 4. Download LINE file.
-5. Check `fileHash` and `fingerprint` duplicates before Gemini.
-6. Run Gemini only after duplicate checks pass.
-7. Save the transaction to Firestore.
-8. Set Sheet sync status according to `SHEET_SYNC_MODE`.
-9. Mark the job `COMPLETED`, `DUPLICATE_SKIPPED`, `RETRY_PENDING`, `PROCESSING_PAUSED`, or `FAILED`.
+5. Check `fileHash` duplicates before parsing.
+6. Parse caption/filename/rule text first.
+7. Run Gemini only when `AI_READ_MODE` allows it and rule confidence is not enough.
+8. Check `fingerprint` and possible duplicate when the parsed record has enough data.
+9. Save the transaction to Firestore with parser metadata.
+10. Set Sheet sync status according to `SHEET_SYNC_MODE`.
+11. Mark the job `COMPLETED`, `DUPLICATE_SKIPPED`, `RETRY_PENDING`, `PROCESSING_PAUSED`, or `FAILED`.
+12. Send one completion card using reply first when possible, then push fallback when enabled.
 
 ## Runtime Guard
 

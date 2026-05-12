@@ -156,11 +156,52 @@ createdAt
 
 ## Debug Gemini Parsing
 
-1. Check Apps Script logs for `analyzeReceiptWithGemini.success` and `ai_parse`.
-2. Inspect `logAiParsingResult_()` output.
-3. Confirm the user wrote structured notes with `_`.
-4. For bank transfer forms, inspect `AI_BankParser.gs`.
-5. If bank service text is used as an item, update `isBankServiceNoise_()` and the prompt.
+1. Check the transaction fields `parseMethod`, `aiUsed`, `parserConfidence`, `missingFields`, and `warnings`.
+2. If `parseMethod=CAPTION_RULE` or `TEXT_RULE`, inspect `Rule_Parser_Service.gs` first.
+3. If `aiUsed=true`, check Apps Script logs for `analyzeReceiptWithGemini.success` and `ai_parse`.
+4. Inspect `logAiParsingResult_()` output.
+5. Confirm the user wrote structured notes with `_`.
+6. For bank transfer forms, inspect `AI_BankParser.gs`.
+7. If bank service text is used as an item, update `isBankServiceNoise_()` and the prompt.
+
+## Rule-First Parsing
+
+Set `AI_READ_MODE=FALLBACK_ONLY` for production. Supported values:
+
+| Mode | Behavior |
+| --- | --- |
+| `OFF` | Never call Gemini. If rule parsing is incomplete, save as `PARSE_INCOMPLETE`. |
+| `FALLBACK_ONLY` | Parse with rules first. Call Gemini only when required fields are missing, confidence is low, or conflicts exist. |
+| `ALWAYS` | Always call Gemini after duplicate checks. Use only when debugging parser quality. |
+
+Supported structured note examples:
+
+```text
+วัสดุ_งานบูธA_สีเทา
+ค่าแรง_W1_พ.ค._งานบูธA
+รายรับ_งานบูธA_มัดจำ
+โรงงาน_ค่าน้ำมัน
+งานบูธA วัสดุ สีเทา
+```
+
+Confidence gate rules:
+
+- `>= 0.85` with `amount`, `date`, `type`, and valid scope becomes `IMPORTED`.
+- `0.60-0.84`, unknown scope, or parser conflict becomes `NEEDS_REVIEW`.
+- `< 0.60` or missing `amount`, `date`, or `type` becomes `PARSE_INCOMPLETE`.
+- `NEEDS_REVIEW` and `PARSE_INCOMPLETE` are not counted by budget summaries.
+
+Safe test helpers:
+
+```text
+testRuleExpenseNoteSkipsGemini_()
+testRuleLaborNoteSkipsGemini_()
+testRuleCaptionPlainTextFirst_()
+testAiReadModeOffIncomplete_()
+testFallbackOnlyUsesGeminiWhenRuleIncomplete_()
+testNeedsReviewExcludedFromSummary_()
+testManualEditValidationConfirms_()
+```
 
 ## Sheet Sync
 
@@ -176,6 +217,39 @@ createdAt
 Sheet sync failures must not delete or rollback Firestore records.
 
 Admin helpers:
+
+## Silent Receipt Notifications
+
+Production receipt submission is configured to avoid extra LINE messages:
+
+```text
+RECEIPT_ACK_ENABLED=false
+RECEIPT_DONE_NOTIFY_ENABLED=true
+RECEIPT_DONE_NOTIFY_MODE=REPLY_THEN_PUSH
+ENABLE_PROCESS_DONE_PUSH=true
+PROCESS_DONE_PUSH_ADMIN_ONLY=false
+MAX_PROCESS_DONE_PUSH_PER_DAY=300
+```
+
+Operational rules:
+
+- `doPost` creates `receipt_jobs` and does not send a received/queued acknowledgement when `RECEIPT_ACK_ENABLED=false`.
+- The worker sends one result message only after processing finishes.
+- `notificationStatus=SENT` prevents duplicate done messages.
+- Duplicate slips use `DUPLICATE_SKIPPED` and send one duplicate notice.
+- `NEEDS_REVIEW` and `PARSE_INCOMPLETE` send one warning card and remain excluded from summaries.
+- If reply token delivery fails, `REPLY_THEN_PUSH` falls back to push if push is enabled and the daily limit is not exceeded.
+
+Admin checks:
+
+```text
+line usage วันนี้
+process done push วันนี้
+notification failed
+notification skipped
+```
+
+If push usage approaches the daily limit, lower `MAX_PROCESS_DONE_PUSH_PER_DAY` or temporarily set `ENABLE_PROCESS_DONE_PUSH=false`.
 
 ```text
 retrySheetSync("DOCUMENT_ID_OR_FULL_DOCUMENT_NAME")

@@ -110,6 +110,12 @@ function saveToFirestore(record) {
       sheetSyncStatus: { stringValue: queryKeys.sheetSyncStatus },
       sheetSyncError: { stringValue: String(safeRecord.sheetSyncError || "") },
       sheetSyncedAt: { stringValue: "" },
+      parseMethod: { stringValue: String(safeRecord.parseMethod || "") },
+      aiUsed: { booleanValue: safeRecord.aiUsed === true },
+      parserConfidence: { doubleValue: normalizeParserConfidence_(safeRecord.parserConfidence || 0) },
+      missingFields: buildFirestoreStringArrayField_(safeRecord.missingFields),
+      warnings: buildFirestoreStringArrayField_(safeRecord.warnings),
+      rawParserName: { stringValue: String(safeRecord.rawParserName || "") },
       parsedAt: { stringValue: String(safeRecord.parsedAt || "") },
       normalizedAt: { stringValue: String(safeRecord.normalizedAt || "") },
       occurredAt: { stringValue: queryKeys.occurredAt },
@@ -293,6 +299,12 @@ function getFirestoreRecordFromDocument_(doc) {
     sheetSyncStatus: getFirestoreString_(fields.sheetSyncStatus),
     sheetSyncError: getFirestoreString_(fields.sheetSyncError),
     sheetSyncedAt: getFirestoreString_(fields.sheetSyncedAt),
+    parseMethod: getFirestoreString_(fields.parseMethod),
+    aiUsed: getFirestoreBoolean_(fields.aiUsed),
+    parserConfidence: getFirestoreNumber(fields.parserConfidence),
+    missingFields: getFirestoreStringArray_(fields.missingFields),
+    warnings: getFirestoreStringArray_(fields.warnings),
+    rawParserName: getFirestoreString_(fields.rawParserName),
     parsedAt: getFirestoreString_(fields.parsedAt),
     normalizedAt: getFirestoreString_(fields.normalizedAt),
     occurredAt: getFirestoreString_(fields.occurredAt),
@@ -458,6 +470,12 @@ function updateFirestoreDocument_(record) {
     fingerprint: { stringValue: queryKeys.fingerprint },
     sheetSyncStatus: { stringValue: queryKeys.sheetSyncStatus },
     sheetSyncError: { stringValue: String(safeRecord.sheetSyncError || "") },
+    parseMethod: { stringValue: String(safeRecord.parseMethod || "") },
+    aiUsed: { booleanValue: safeRecord.aiUsed === true },
+    parserConfidence: { doubleValue: normalizeParserConfidence_(safeRecord.parserConfidence || 0) },
+    missingFields: buildFirestoreStringArrayField_(safeRecord.missingFields),
+    warnings: buildFirestoreStringArrayField_(safeRecord.warnings),
+    rawParserName: { stringValue: String(safeRecord.rawParserName || "") },
     occurredAt: { stringValue: queryKeys.occurredAt },
     createdAt: { stringValue: queryKeys.createdAt },
     updatedAt: { stringValue: queryKeys.updatedAt }
@@ -609,6 +627,19 @@ function updateLatestExpenseRecord_(sourceKey, fieldText, rawValue, actor) {
     if (newRecord.category === LABOR_CATEGORY_NAME) {
       newRecord.job = buildLaborJobName_(week, newRecord.laborMonth);
     }
+  }
+
+  const manualEvaluation = evaluateParsedTransaction(buildManualParsedResultFromRecord_(newRecord));
+  if (isReviewStatus_(newRecord.status) && manualEvaluation.status === RECORD_STATUS_IMPORTED) {
+    newRecord.status = RECORD_STATUS_IMPORTED;
+    newRecord.parseMethod = PARSE_METHOD_MANUAL;
+    newRecord.parserConfidence = manualEvaluation.confidence;
+    newRecord.missingFields = [];
+    newRecord.warnings = [];
+    newRecord.rawParserName = "manual_edit_validation";
+  } else if (isReviewStatus_(newRecord.status)) {
+    newRecord.missingFields = manualEvaluation.missingFields;
+    newRecord.warnings = manualEvaluation.warnings;
   }
 
   const sheetSyncMode = getSheetSyncMode();

@@ -152,6 +152,22 @@ const RECEIPT_JOB_STATUS_DUPLICATE_SKIPPED = "DUPLICATE_SKIPPED";
 const RECEIPT_JOB_DEFAULT_MAX_RETRY = 3;
 const RECEIPT_JOB_LOCK_TTL_MS = 10 * 60 * 1000;
 const RECEIPT_JOB_DEFAULT_BATCH_SIZE = 3;
+const RECEIPT_DONE_NOTIFY_MODE_REPLY_THEN_PUSH = "REPLY_THEN_PUSH";
+const RECEIPT_DONE_NOTIFY_MODE_REPLY_ONLY = "REPLY_ONLY";
+const RECEIPT_DONE_NOTIFY_MODE_PUSH_ONLY = "PUSH_ONLY";
+const RECEIPT_NOTIFICATION_STATUS_PENDING = "PENDING";
+const RECEIPT_NOTIFICATION_STATUS_SENT = "SENT";
+const RECEIPT_NOTIFICATION_STATUS_FAILED = "FAILED";
+const RECEIPT_NOTIFICATION_STATUS_SKIPPED = "SKIPPED";
+const RECEIPT_NOTIFICATION_METHOD_REPLY = "reply";
+const RECEIPT_NOTIFICATION_METHOD_PUSH = "push";
+const RECEIPT_NOTIFICATION_METHOD_SKIPPED = "skipped";
+const DEFAULT_RECEIPT_ACK_ENABLED = false;
+const DEFAULT_RECEIPT_DONE_NOTIFY_ENABLED = true;
+const DEFAULT_RECEIPT_DONE_NOTIFY_MODE = RECEIPT_DONE_NOTIFY_MODE_REPLY_THEN_PUSH;
+const DEFAULT_ENABLE_PROCESS_DONE_PUSH = true;
+const DEFAULT_PROCESS_DONE_PUSH_ADMIN_ONLY = false;
+const DEFAULT_MAX_PROCESS_DONE_PUSH_PER_DAY = 300;
 const RUNTIME_GUARD_DEFAULT_MAX_MS = 270000;
 const RUNTIME_GUARD_STOP_BUFFER_MS = 30000;
 const FACTORY_JOB_NAME = "โรงงาน";
@@ -169,6 +185,10 @@ const SHEET_SYNC_MODE_MANUAL = "MANUAL";
 const SHEET_SYNC_MODE_BATCH = "BATCH";
 const SHEET_SYNC_MODE_REALTIME = "REALTIME";
 const DEFAULT_SHEET_SYNC_MODE = SHEET_SYNC_MODE_BATCH;
+const AI_READ_MODE_OFF = "OFF";
+const AI_READ_MODE_FALLBACK_ONLY = "FALLBACK_ONLY";
+const AI_READ_MODE_ALWAYS = "ALWAYS";
+const DEFAULT_AI_READ_MODE = AI_READ_MODE_FALLBACK_ONLY;
 const SHEET_SYNC_STATUS_PENDING = "PENDING";
 const SHEET_SYNC_STATUS_PENDING_MANUAL = "PENDING_MANUAL";
 const SHEET_SYNC_STATUS_DISABLED = "DISABLED";
@@ -224,6 +244,12 @@ const FIRESTORE_EXPENSE_LIST_FIELD_MASKS = [
   "sheetSyncStatus",
   "sheetSyncError",
   "sheetSyncedAt",
+  "parseMethod",
+  "aiUsed",
+  "parserConfidence",
+  "missingFields",
+  "warnings",
+  "rawParserName",
   "parsedAt",
   "normalizedAt",
   "occurredAt",
@@ -316,15 +342,25 @@ function getConfig() {
   }
 
   const props = PropertiesService.getScriptProperties();
+  const aiReadMode = normalizeAiReadMode_(getOptionalScriptProperty_(props, "AI_READ_MODE"));
 
   const config = {
     lineToken: getRequiredScriptProperty_(props, "LINE_TOKEN"),
     lineChannelSecret: getOptionalScriptProperty_(props, "LINE_CHANNEL_SECRET"),
-    geminiKey: getRequiredScriptProperty_(props, "GEMINI_KEY"),
+    geminiKey: aiReadMode === AI_READ_MODE_OFF
+      ? getOptionalScriptProperty_(props, "GEMINI_KEY")
+      : getRequiredScriptProperty_(props, "GEMINI_KEY"),
     firebaseProjectId: getRequiredScriptProperty_(props, "FIREBASE_PROJECT_ID"),
     firebaseStorageBucket: getOptionalScriptProperty_(props, "FIREBASE_STORAGE_BUCKET"),
     sheetId: getOptionalScriptProperty_(props, "SHEET_ID"),
     sheetSyncMode: normalizeSheetSyncMode_(getOptionalScriptProperty_(props, "SHEET_SYNC_MODE")),
+    aiReadMode: aiReadMode,
+    receiptAckEnabled: getBooleanScriptProperty_(props, "RECEIPT_ACK_ENABLED", DEFAULT_RECEIPT_ACK_ENABLED),
+    receiptDoneNotifyEnabled: getBooleanScriptProperty_(props, "RECEIPT_DONE_NOTIFY_ENABLED", DEFAULT_RECEIPT_DONE_NOTIFY_ENABLED),
+    receiptDoneNotifyMode: normalizeReceiptDoneNotifyMode_(getOptionalScriptProperty_(props, "RECEIPT_DONE_NOTIFY_MODE")),
+    enableProcessDonePush: getBooleanScriptProperty_(props, "ENABLE_PROCESS_DONE_PUSH", DEFAULT_ENABLE_PROCESS_DONE_PUSH),
+    processDonePushAdminOnly: getBooleanScriptProperty_(props, "PROCESS_DONE_PUSH_ADMIN_ONLY", DEFAULT_PROCESS_DONE_PUSH_ADMIN_ONLY),
+    maxProcessDonePushPerDay: getPositiveIntScriptProperty_(props, "MAX_PROCESS_DONE_PUSH_PER_DAY", DEFAULT_MAX_PROCESS_DONE_PUSH_PER_DAY),
     webhookSecret: getOptionalScriptProperty_(props, "WEBHOOK_SECRET"),
     ownCompanyAliases: getListScriptProperty_(props, "OWN_COMPANY_ALIASES", DEFAULT_OWN_COMPANY_HINTS),
     jobAliases: getMapListScriptProperty_(props, "JOB_ALIASES").concat(DEFAULT_JOB_ALIASES),
@@ -362,6 +398,30 @@ function normalizeSheetSyncMode_(mode) {
   return DEFAULT_SHEET_SYNC_MODE;
 }
 
+function normalizeAiReadMode_(mode) {
+  const value = String(mode || DEFAULT_AI_READ_MODE).trim().toUpperCase();
+  if (
+    value === AI_READ_MODE_OFF ||
+    value === AI_READ_MODE_FALLBACK_ONLY ||
+    value === AI_READ_MODE_ALWAYS
+  ) {
+    return value;
+  }
+  return DEFAULT_AI_READ_MODE;
+}
+
+function normalizeReceiptDoneNotifyMode_(mode) {
+  const value = String(mode || DEFAULT_RECEIPT_DONE_NOTIFY_MODE).trim().toUpperCase();
+  if (
+    value === RECEIPT_DONE_NOTIFY_MODE_REPLY_THEN_PUSH ||
+    value === RECEIPT_DONE_NOTIFY_MODE_REPLY_ONLY ||
+    value === RECEIPT_DONE_NOTIFY_MODE_PUSH_ONLY
+  ) {
+    return value;
+  }
+  return DEFAULT_RECEIPT_DONE_NOTIFY_MODE;
+}
+
 function getRequiredScriptProperty_(props, key) {
   const value = String(props.getProperty(key) || "").trim();
   if (!value) {
@@ -372,6 +432,21 @@ function getRequiredScriptProperty_(props, key) {
 
 function getOptionalScriptProperty_(props, key) {
   return String(props.getProperty(key) || "").trim();
+}
+
+function getBooleanScriptProperty_(props, key, defaultValue) {
+  const raw = String(props.getProperty(key) || "").trim();
+  if (!raw) return defaultValue === true;
+  return /^(true|1|yes|y|on)$/i.test(raw);
+}
+
+function getPositiveIntScriptProperty_(props, key, defaultValue) {
+  const raw = String(props.getProperty(key) || "").trim();
+  const parsed = parseInt(raw, 10);
+  if (!isFinite(parsed) || parsed <= 0) {
+    return Math.max(1, parseInt(defaultValue, 10) || 1);
+  }
+  return parsed;
 }
 
 function getListScriptProperty_(props, key, defaultList) {

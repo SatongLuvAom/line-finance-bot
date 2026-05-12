@@ -112,55 +112,64 @@ function processReceipt(event, context) {
       match: "none"
     });
 
-    markProcessStage_(perfLogger, "gemini_ocr_start", "ok", {
-      mimeType: lineFile.mimeType
-    });
-    assertCanContinue("gemini_ocr", runtimeGuard);
-    const geminiResult = analyzeReceiptWithGemini(lineFile.base64Data, lineFile.mimeType);
-    markProcessStage_(perfLogger, "gemini_ocr_end", "ok", {
-      model: geminiResult.model || ""
-    });
-
     markProcessStage_(perfLogger, "parsing_start", "ok", {});
     assertCanContinue("receipt_parse", runtimeGuard);
-    const cleanJson = geminiResult.parsedData || parseGeminiReceiptJson(geminiResult.data);
-    logAiParsingResult_("", cleanJson, "ok", "");
-    let normalized = normalizeReceiptData(cleanJson);
+    let normalized = parseReceiptWithRuleFirst_(event, lineFile, {
+      context: safeContext,
+      perfLogger: perfLogger,
+      runtimeGuard: runtimeGuard,
+      traceId: safeContext.traceId || ""
+    });
     const actor = getLineActorInfo_(event.source);
     markProcessStage_(perfLogger, "parsing_end", "ok", {
       type: normalized.type,
       category: normalized.category,
-      amount: normalized.amount
+      amount: normalized.amount,
+      parseMethod: normalized.parseMethod || "",
+      aiUsed: normalized.aiUsed === true,
+      parserConfidence: normalized.parserConfidence || 0,
+      status: normalized.status || ""
     });
 
-    markProcessStage_(perfLogger, "duplicate_check_start", "ok", {
-      check: "fingerprint"
-    });
-    assertCanContinue("duplicate_check_fingerprint", runtimeGuard);
-    const existingFingerprintRecord = getTransactionByFingerprint(buildRecordFingerprintForDuplicate_(normalized));
-    if (existingFingerprintRecord) {
-      markProcessStage_(perfLogger, "duplicate_check_end", "duplicate", {
-        match: "fingerprint",
-        documentName: existingFingerprintRecord.documentName || ""
+    let duplicateInfo = {
+      duplicateStatus: DUPLICATE_STATUS_UNIQUE,
+      possibleDuplicateIds: []
+    };
+    if (shouldRunContentDuplicateCheck_(normalized)) {
+      markProcessStage_(perfLogger, "duplicate_check_start", "ok", {
+        check: "fingerprint"
       });
-      rememberRecentReceiptState_(normalized, "saved");
-      rememberProcessedReceiptMessageId_(sourceMessageId, "saved");
-      if (!suppressLineReply) {
-        replyText(replyToken, buildDuplicateReceiptMessage_("saved"));
+      assertCanContinue("duplicate_check_fingerprint", runtimeGuard);
+      const existingFingerprintRecord = getTransactionByFingerprint(buildRecordFingerprintForDuplicate_(normalized));
+      if (existingFingerprintRecord) {
+        markProcessStage_(perfLogger, "duplicate_check_end", "duplicate", {
+          match: "fingerprint",
+          documentName: existingFingerprintRecord.documentName || ""
+        });
+        rememberRecentReceiptState_(normalized, "saved");
+        rememberProcessedReceiptMessageId_(sourceMessageId, "saved");
+        if (!suppressLineReply) {
+          replyText(replyToken, buildDuplicateReceiptMessage_("saved"));
+        }
+        markProcessStage_(perfLogger, "line_reply", "ok", { reply: "duplicate_fingerprint" });
+        finishProcessLogger_(perfLogger, "duplicate", "");
+        return { ok: true, duplicate: true, reason: "fingerprint", documentName: existingFingerprintRecord.documentName || "" };
       }
-      markProcessStage_(perfLogger, "line_reply", "ok", { reply: "duplicate_fingerprint" });
-      finishProcessLogger_(perfLogger, "duplicate", "");
-      return { ok: true, duplicate: true, reason: "fingerprint", documentName: existingFingerprintRecord.documentName || "" };
-    }
 
-    markProcessStage_(perfLogger, "duplicate_check_start", "ok", {
-      check: "possible_duplicate"
-    });
-    assertCanContinue("duplicate_check_possible", runtimeGuard);
-    const duplicateInfo = inspectPossibleDuplicateReceipts_(sourceMessageId, normalized);
-    markProcessStage_(perfLogger, "duplicate_check_end", duplicateInfo.possibleDuplicateIds.length ? "possible_duplicate" : "ok", {
-      possibleDuplicateCount: duplicateInfo.possibleDuplicateIds.length
-    });
+      markProcessStage_(perfLogger, "duplicate_check_start", "ok", {
+        check: "possible_duplicate"
+      });
+      assertCanContinue("duplicate_check_possible", runtimeGuard);
+      duplicateInfo = inspectPossibleDuplicateReceipts_(sourceMessageId, normalized);
+      markProcessStage_(perfLogger, "duplicate_check_end", duplicateInfo.possibleDuplicateIds.length ? "possible_duplicate" : "ok", {
+        possibleDuplicateCount: duplicateInfo.possibleDuplicateIds.length
+      });
+    } else {
+      markProcessStage_(perfLogger, "duplicate_check_end", "skipped", {
+        check: "fingerprint_possible_duplicate",
+        reason: "parse_incomplete_or_missing_amount"
+      });
+    }
 
     normalized = applyReceiptMetadata_(normalized, {
       actor: actor,
@@ -171,10 +180,12 @@ function processReceipt(event, context) {
       possibleDuplicateIds: duplicateInfo.possibleDuplicateIds,
       status: duplicateInfo.duplicateStatus === DUPLICATE_STATUS_POSSIBLE_DUPLICATE
         ? RECORD_STATUS_PENDING_REVIEW
-        : RECORD_STATUS_IMPORTED
+        : (normalized.status || RECORD_STATUS_IMPORTED)
     });
 
-    const duplicateStateByFingerprint = getRecentReceiptStateByRecord_(normalized);
+    const duplicateStateByFingerprint = shouldRunContentDuplicateCheck_(normalized)
+      ? getRecentReceiptStateByRecord_(normalized)
+      : "";
     if (duplicateStateByFingerprint) {
       rememberProcessedReceiptMessageId_(sourceMessageId, duplicateStateByFingerprint);
       if (!suppressLineReply) {
@@ -231,7 +242,9 @@ function processReceipt(event, context) {
       perfLogger: perfLogger,
       suppressLineReply: suppressLineReply
     });
-    rememberRecentReceiptState_(normalized, "saved");
+    if (shouldRunContentDuplicateCheck_(normalized)) {
+      rememberRecentReceiptState_(normalized, "saved");
+    }
     rememberProcessedReceiptMessageId_(sourceMessageId, "saved");
     finishProcessLogger_(perfLogger, "ok", "");
     return saveResult;
@@ -338,6 +351,151 @@ function buildDuplicateReceiptMessage_(state) {
   ].join("\n");
 }
 
+function parseReceiptWithRuleFirst_(event, lineFile, options) {
+  const safeOptions = options || {};
+  const perfLogger = safeOptions.perfLogger || null;
+  const runtimeGuard = safeOptions.runtimeGuard || createRuntimeGuard();
+  const traceId = String(safeOptions.traceId || "");
+  const ruleText = getReceiptRuleTextFromEvent_(event, safeOptions.context || {});
+  const ruleResult = parseReceiptCaptionRule(ruleText);
+  const evaluatedRule = evaluateParsedTransaction(ruleResult);
+  const aiReadMode = getAiReadMode_();
+  const lineUserId = event && event.source && event.source.userId || "";
+
+  logParserAudit_(
+    evaluatedRule.confidence > 0 ? "RULE_PARSE_SUCCESS" : "RULE_PARSE_FAILED",
+    evaluatedRule,
+    {
+      traceId: traceId,
+      lineUserId: lineUserId,
+      status: evaluatedRule.confidence > 0 ? "ok" : "error"
+    }
+  );
+
+  if (!shouldUseGeminiForParsedResult_(evaluatedRule)) {
+    markProcessStage_(perfLogger, "gemini_ocr_skipped", "ok", {
+      aiReadMode: aiReadMode,
+      reason: aiReadMode === AI_READ_MODE_OFF ? "AI_READ_MODE_OFF" : "rule_confident"
+    });
+    logParserAudit_("AI_SKIPPED", evaluatedRule, {
+      traceId: traceId,
+      lineUserId: lineUserId
+    });
+    const record = buildReceiptRecordFromParsedResult_(evaluatedRule, {
+      aiUsed: false,
+      fallbackDate: formatDateToYMD(new Date())
+    });
+    logReceiptParserStatusAudit_(record, traceId, lineUserId);
+    return record;
+  }
+
+  markProcessStage_(perfLogger, "gemini_ocr_start", "ok", {
+    mimeType: lineFile.mimeType,
+    aiReadMode: aiReadMode
+  });
+  logParserAudit_("AI_FALLBACK_USED", evaluatedRule, {
+    traceId: traceId,
+    lineUserId: lineUserId
+  });
+
+  try {
+    assertCanContinue("gemini_ocr", runtimeGuard);
+    const geminiResult = analyzeReceiptWithGemini(lineFile.base64Data, lineFile.mimeType);
+    markProcessStage_(perfLogger, "gemini_ocr_end", "ok", {
+      model: geminiResult.model || ""
+    });
+
+    const cleanJson = geminiResult.parsedData || parseGeminiReceiptJson(geminiResult.data);
+    logAiParsingResult_(traceId, cleanJson, "ok", "");
+    const normalized = normalizeReceiptData(cleanJson);
+    const geminiParsedResult = buildGeminiParsedResult_(cleanJson, normalized);
+    const conflicts = detectParsedTransactionConflicts_(evaluatedRule, geminiParsedResult);
+    const mergedParsedResult = Object.assign({}, geminiParsedResult, {
+      conflicts: conflicts,
+      warnings: uniqueStrings_((geminiParsedResult.warnings || []).concat(conflicts))
+    });
+    const finalRecord = applyParserMetadataToRecord_(normalized, mergedParsedResult, {
+      aiUsed: true,
+      status: conflicts.length ? RECORD_STATUS_NEEDS_REVIEW : ""
+    });
+
+    if (conflicts.length) {
+      logParserAudit_("PARSE_CONFLICT_DETECTED", mergedParsedResult, {
+        traceId: traceId,
+        lineUserId: lineUserId,
+        status: "warning"
+      });
+    }
+
+    logReceiptParserStatusAudit_(finalRecord, traceId, lineUserId);
+    return finalRecord;
+  } catch (err) {
+    markProcessStage_(perfLogger, "gemini_ocr_end", "error", {
+      errorMessage: buildUserFriendlyErrorMessage_(err)
+    });
+    logAiParsingResult_(traceId, {}, "error", err && err.message ? err.message : String(err || ""));
+
+    const fallbackResult = Object.assign({}, evaluatedRule, {
+      warnings: uniqueStrings_((evaluatedRule.warnings || []).concat([
+        "ai_fallback_failed: " + buildUserFriendlyErrorMessage_(err)
+      ])),
+      confidence: Math.min(Number(evaluatedRule.confidence || 0), 0.59)
+    });
+    const record = buildReceiptRecordFromParsedResult_(fallbackResult, {
+      aiUsed: true,
+      status: RECORD_STATUS_PARSE_INCOMPLETE,
+      fallbackDate: formatDateToYMD(new Date())
+    });
+    logReceiptParserStatusAudit_(record, traceId, lineUserId);
+    return record;
+  }
+}
+
+function getReceiptRuleTextFromEvent_(event, context) {
+  const safeEvent = event || {};
+  const message = safeEvent.message || {};
+  const safeContext = context || {};
+  return [
+    safeContext.captionText,
+    message.text,
+    message.fileName
+  ].map(function(value) {
+    return String(value || "").trim();
+  }).filter(Boolean).join(" ");
+}
+
+function shouldRunContentDuplicateCheck_(record) {
+  const safeRecord = record || {};
+  return Number(safeRecord.amount || 0) > 0 &&
+    !!safeRecord.date &&
+    String(safeRecord.status || "") !== RECORD_STATUS_PARSE_INCOMPLETE;
+}
+
+function logReceiptParserStatusAudit_(record, traceId, lineUserId) {
+  const status = String(record && record.status || "");
+  let action = "AUTO_CONFIRMED";
+  if (status === RECORD_STATUS_NEEDS_REVIEW || status === RECORD_STATUS_PENDING_REVIEW) {
+    action = "NEEDS_REVIEW_CREATED";
+  } else if (status === RECORD_STATUS_PARSE_INCOMPLETE) {
+    action = "PARSE_INCOMPLETE_CREATED";
+  }
+
+  writeAuditLog_({
+    action: action,
+    traceId: traceId || "",
+    lineUserId: lineUserId || "",
+    status: "ok",
+    newValue: {
+      status: status,
+      parseMethod: record && record.parseMethod || "",
+      aiUsed: record && record.aiUsed === true,
+      parserConfidence: record && record.parserConfidence || 0,
+      missingFields: record && record.missingFields || [],
+      warnings: record && record.warnings || []
+    }
+  });
+}
+
 
 function saveReceiptRecord_(replyToken, record, meta) {
   validateReceiptBeforeSave_(record);
@@ -379,6 +537,12 @@ function saveReceiptRecord_(replyToken, record, meta) {
     possibleDuplicateIds: record.possibleDuplicateIds,
     sheetSyncStatus: initialSheetSyncStatus,
     sheetSyncError: "",
+    parseMethod: record.parseMethod,
+    aiUsed: record.aiUsed,
+    parserConfidence: record.parserConfidence,
+    missingFields: record.missingFields,
+    warnings: record.warnings,
+    rawParserName: record.rawParserName,
     parsedAt: record.parsedAt,
     normalizedAt: record.normalizedAt
   });
@@ -407,18 +571,7 @@ function saveReceiptRecord_(replyToken, record, meta) {
     errorMessage: sheetSync.errorMessage || ""
   });
 
-  const messages = [
-    isReviewStatus_(record.status)
-      ? buildPendingReviewCard(record)
-      : createReceiptFlex(record)
-  ];
-  if (!sheetSync.ok) {
-    messages.push(buildSheetSyncWarningMessage_(sheetSync.errorMessage));
-  }
-  const alertMessage = checkBudgetAlert(record.job, record);
-  if (alertMessage) {
-    messages.push(alertMessage);
-  }
+  const messages = buildReceiptCompletionMessages_(record, sheetSync);
 
   markProcessStage_(perfLogger, "line_reply_start", "ok", {
     messageCount: messages.length
@@ -437,6 +590,14 @@ function saveReceiptRecord_(replyToken, record, meta) {
     record: record,
     sheetSync: sheetSync
   };
+}
+
+function buildReceiptCompletionMessages_(record, sheetSync) {
+  return [
+    buildReceiptSavedFlexCard(Object.assign({}, record || {}, {
+      sheetSyncStatus: sheetSync && sheetSync.sheetSyncStatus || record && record.sheetSyncStatus || ""
+    }))
+  ];
 }
 
 function buildSheetSyncWarningMessage_(errorMessage) {
@@ -604,6 +765,9 @@ function buildReceiptRecord_(cleanJson) {
 function validateReceiptBeforeSave_(record) {
   if (!record) {
     throw new Error("ไม่พบข้อมูลสลิปสำหรับบันทึก");
+  }
+  if (String(record.status || "") === RECORD_STATUS_PARSE_INCOMPLETE) {
+    return true;
   }
   if (!record.date) {
     throw new Error("ไม่พบวันที่ในข้อมูลสลิป");

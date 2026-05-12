@@ -102,6 +102,104 @@ function testReceiptMetadata_() {
   };
 }
 
+function testRuleExpenseNoteSkipsGemini_() {
+  const parsed = parseReceiptCaptionRule("วัสดุ_งานบูธA_สีเทา 1200 2026-05-11");
+  return {
+    ok:
+      parsed.parseMethod === PARSE_METHOD_CAPTION_RULE &&
+      shouldAutoConfirm(parsed) === true &&
+      shouldUseGeminiForParsedResultInMode_(parsed, AI_READ_MODE_FALLBACK_ONLY) === false,
+    parsed: evaluateParsedTransaction(parsed)
+  };
+}
+
+function testRuleLaborNoteSkipsGemini_() {
+  const parsed = parseReceiptCaptionRule("ค่าแรง_W1_พ.ค._งานบูธA 6208 2026-05-11");
+  return {
+    ok:
+      parsed.parsedData.category === LABOR_CATEGORY_NAME &&
+      parsed.parsedData.laborWeek === "1" &&
+      shouldAutoConfirm(parsed) === true &&
+      shouldUseGeminiForParsedResultInMode_(parsed, AI_READ_MODE_FALLBACK_ONLY) === false,
+    parsed: evaluateParsedTransaction(parsed)
+  };
+}
+
+function testRuleCaptionPlainTextFirst_() {
+  const parsed = parseReceiptCaptionRule("งานบูธA วัสดุ สีเทา 900 2026-05-11");
+  return {
+    ok:
+      parsed.parseMethod === PARSE_METHOD_CAPTION_RULE &&
+      normalizeComparableText_(parsed.parsedData.job) === normalizeComparableText_("งานบูธA") &&
+      parsed.parsedData.category !== "อื่นๆ",
+    parsed: evaluateParsedTransaction(parsed)
+  };
+}
+
+function testAiReadModeOffIncomplete_() {
+  const parsed = parseReceiptCaptionRule("วัสดุ_งานบูธA_สีเทา");
+  return {
+    ok:
+      shouldMarkParseIncomplete(parsed) === true &&
+      shouldUseGeminiForParsedResultInMode_(parsed, AI_READ_MODE_OFF) === false,
+    parsed: evaluateParsedTransaction(parsed)
+  };
+}
+
+function testFallbackOnlyUsesGeminiWhenRuleIncomplete_() {
+  const parsed = parseReceiptCaptionRule("วัสดุ_งานบูธA_สีเทา");
+  return {
+    ok:
+      shouldAutoConfirm(parsed) === false &&
+      shouldUseGeminiForParsedResultInMode_(parsed, AI_READ_MODE_FALLBACK_ONLY) === true,
+    parsed: evaluateParsedTransaction(parsed)
+  };
+}
+
+function testRuleDuplicateDoesNotNeedGemini_() {
+  const parsed = parseReceiptCaptionRule("รายรับ_งานบูธA_มัดจำ 5000 2026-05-11");
+  return {
+    ok:
+      parsed.parsedData.type === "income" &&
+      shouldAutoConfirm(parsed) === true &&
+      shouldUseGeminiForParsedResultInMode_(parsed, AI_READ_MODE_FALLBACK_ONLY) === false,
+    parsed: evaluateParsedTransaction(parsed)
+  };
+}
+
+function testNeedsReviewExcludedFromSummary_() {
+  const result = summarizeTransactions([
+    mockJobSummaryRecord_("expense", 100, "วัสดุ", "ร้าน A", RECORD_STATUS_IMPORTED),
+    mockJobSummaryRecord_("expense", 999, "วัสดุ", "ร้าน B", RECORD_STATUS_NEEDS_REVIEW),
+    mockJobSummaryRecord_("expense", 999, "วัสดุ", "ร้าน C", RECORD_STATUS_PARSE_INCOMPLETE)
+  ], {
+    title: "สรุปงบ งานทดสอบ"
+  });
+
+  return {
+    ok: result.totalExpense === 100 && result.count === 1,
+    summary: result
+  };
+}
+
+function testManualEditValidationConfirms_() {
+  const record = {
+    type: "expense",
+    date: "2026-05-11",
+    merchant: "ร้านทดสอบ",
+    amount: 100,
+    category: "วัสดุโครงสร้าง",
+    job: "งานบูธA",
+    items: "สีเทา",
+    status: RECORD_STATUS_NEEDS_REVIEW
+  };
+  const evaluation = evaluateParsedTransaction(buildManualParsedResultFromRecord_(record));
+  return {
+    ok: evaluation.status === RECORD_STATUS_IMPORTED,
+    evaluation: evaluation
+  };
+}
+
 function testMasterDataAliases_() {
   return {
     job: normalizeJobAlias_("Factory"),
@@ -239,12 +337,26 @@ function testSheetSave_() {
   return "OK";
 }
 
-function mockLineEvent_(text) {
+function mockLineEvent_(textOrType, options) {
+  const safeOptions = options || {};
+  if (safeOptions.id || safeOptions.source || safeOptions.replyToken || /^(image|file)$/i.test(String(textOrType || ""))) {
+    return {
+      type: "message",
+      replyToken: safeOptions.replyToken || "reply-token-test",
+      source: safeOptions.source || { type: "user", userId: "U_TEST" },
+      message: {
+        id: safeOptions.id || "MSG_TEST",
+        type: String(textOrType || "image"),
+        fileName: safeOptions.fileName || ""
+      }
+    };
+  }
+
   return {
     type: "message",
     replyToken: "mock_reply_token",
     source: { type: "user", userId: "mock_user" },
-    message: { type: "text", text: String(text || "help") }
+    message: { type: "text", text: String(textOrType || "help") }
   };
 }
 
@@ -899,10 +1011,12 @@ function testFlexFailFallback_() {
 
 
 function testErrorCardNoSecret_() {
+  const fakeBearer = "Bearer " + "abcdef1234567890";
+  const fakeApiKey = "AI" + "zaSyTESTSECRET";
   const message = buildErrorCard({
     commandName: "JOB_TOTAL_SUMMARY",
     errorId: "ERR-TEST123",
-    safeErrorMessage: "Bearer abcdef1234567890 token=supersecret AIzaSyTESTSECRET"
+    safeErrorMessage: fakeBearer + " token=supersecret " + fakeApiKey
   });
   const json = JSON.stringify(message);
 
@@ -911,9 +1025,96 @@ function testErrorCardNoSecret_() {
       message.type === "flex" &&
       json.indexOf("abcdef1234567890") === -1 &&
       json.indexOf("supersecret") === -1 &&
-      json.indexOf("AIzaSyTESTSECRET") === -1 &&
+      json.indexOf(fakeApiKey) === -1 &&
       json.indexOf("stack") === -1,
     messageType: message.type
+  };
+}
+
+function testReceiptSavedFlexCard_() {
+  const message = buildReceiptSavedFlexCard(mockReceiptNotificationRecord_(RECORD_STATUS_IMPORTED));
+  return {
+    ok:
+      message.type === "flex" &&
+      JSON.stringify(message).indexOf("บันทึกสลิปเรียบร้อยแล้ว") !== -1,
+    messageType: message.type
+  };
+}
+
+
+function testReceiptIncompleteFlexCard_() {
+  const message = buildReceiptSavedFlexCard(Object.assign(
+    mockReceiptNotificationRecord_(RECORD_STATUS_PARSE_INCOMPLETE),
+    { missingFields: ["amount", "job"] }
+  ));
+  const text = JSON.stringify(message);
+  return {
+    ok:
+      message.type === "flex" &&
+      text.indexOf("อ่านสลิปได้ไม่ครบ") !== -1 &&
+      text.indexOf("ยังไม่ถูกนับในสรุปงบ") !== -1,
+    messageType: message.type
+  };
+}
+
+
+function testReceiptDuplicateCard_() {
+  const message = buildDuplicateReceiptFlexCard_(mockReceiptNotificationRecord_(RECORD_STATUS_IMPORTED), {
+    reason: "fileHash"
+  });
+  return {
+    ok:
+      message.type === "flex" &&
+      JSON.stringify(message).indexOf("สลิปนี้เคยบันทึกแล้ว") !== -1,
+    messageType: message.type
+  };
+}
+
+
+function testReceiptNotificationJobFields_() {
+  const event = mockLineEvent_("image", {
+    id: "MSG_NOTIFY_TEST",
+    source: { type: "user", userId: "U_TEST" },
+    replyToken: "reply-token-test"
+  });
+  const job = buildReceiptNotificationJobFromEvent_(event, { traceId: "tr_test" });
+  return {
+    ok:
+      job.replyToken === "reply-token-test" &&
+      !!job.replyTokenCreatedAt &&
+      job.notificationStatus === RECEIPT_NOTIFICATION_STATUS_PENDING &&
+      job.canUseReplyToken === true,
+    job: Object.assign({}, job, { replyToken: "MASKED" })
+  };
+}
+
+
+function testReceiptReplyTokenUsable_() {
+  const job = {
+    replyToken: "reply-token-test",
+    replyTokenCreatedAt: new Date().toISOString(),
+    canUseReplyToken: true
+  };
+  return {
+    ok: canUseReplyToken(job) === true,
+    canUseReplyToken: canUseReplyToken(job)
+  };
+}
+
+
+function testReceiptNotificationSentSkips_() {
+  const decision = chooseLineNotifyMethod({
+    notificationStatus: RECEIPT_NOTIFICATION_STATUS_SENT,
+    replyToken: "reply-token-test",
+    replyTokenCreatedAt: new Date().toISOString(),
+    canUseReplyToken: true,
+    pushAllowed: true
+  });
+  return {
+    ok:
+      decision.method === RECEIPT_NOTIFICATION_METHOD_SKIPPED &&
+      decision.reason === "already_sent",
+    decision: decision
   };
 }
 
@@ -959,3 +1160,20 @@ function mockJobSummaryRecord_(type, amount, category, merchant, status) {
   };
 }
 
+
+function mockReceiptNotificationRecord_(status) {
+  return {
+    type: "expense",
+    date: "2026-05-12",
+    merchant: "ร้านทดสอบ",
+    amount: 1200,
+    category: "วัสดุโครงสร้าง",
+    job: "งานบูธA",
+    items: "สีเทา",
+    note: "วัสดุ_งานบูธA_สีเทา",
+    status: status || RECORD_STATUS_IMPORTED,
+    parseMethod: PARSE_METHOD_CAPTION_RULE,
+    parserConfidence: 0.9,
+    sheetSyncStatus: SHEET_SYNC_STATUS_PENDING
+  };
+}

@@ -62,6 +62,57 @@ function sendLineMessages(replyToken, messages) {
   }
 }
 
+function sendLinePushMessages_(to, messages) {
+  const target = String(to || "").trim();
+  if (!target) {
+    return false;
+  }
+
+  try {
+    const config = getConfig();
+    const url = "https://api.line.me/v2/bot/message/push";
+    const payload = {
+      to: target,
+      messages: messages || []
+    };
+
+    const res = safeUrlFetch(url, {
+      method: "post",
+      contentType: "application/json",
+      headers: {
+        Authorization: `Bearer ${config.lineToken}`
+      },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    }, {
+      service: "line",
+      action: "push",
+      method: "post"
+    });
+
+    const statusCode = res.getResponseCode();
+    const bodyText = res.getContentText();
+    logInfo("sendLinePushMessages_.response", {
+      statusCode: statusCode,
+      body: truncateText_(bodyText, 500)
+    });
+
+    if (statusCode < 200 || statusCode >= 300) {
+      throw new Error(`LINE Push HTTP ${statusCode}: ${bodyText}`);
+    }
+
+    return true;
+  } catch (err) {
+    logError("sendLinePushMessages_.error", err);
+    return false;
+  }
+}
+
+function getLinePushTargetFromSource_(source) {
+  const safeSource = source || {};
+  return String(safeSource.groupId || safeSource.roomId || safeSource.userId || "").trim();
+}
+
 
 function buildQuickReplyFromTexts_(texts) {
   const safeTexts = (texts || [])

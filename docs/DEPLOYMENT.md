@@ -28,7 +28,7 @@ The web app runs as `USER_DEPLOYING` and allows `ANYONE_ANONYMOUS` so LINE can c
 Required:
 
 - `LINE_TOKEN`
-- `GEMINI_KEY`
+- `GEMINI_KEY` unless `AI_READ_MODE=OFF`
 - `FIREBASE_PROJECT_ID`
 - `SHEET_ID` unless `SHEET_SYNC_MODE=OFF`
 
@@ -36,6 +36,13 @@ Recommended:
 
 - `FIREBASE_STORAGE_BUCKET`
 - `SHEET_SYNC_MODE` (`OFF`, `MANUAL`, `BATCH`, `REALTIME`; default `BATCH`)
+- `AI_READ_MODE` (`OFF`, `FALLBACK_ONLY`, `ALWAYS`; default `FALLBACK_ONLY`)
+- `RECEIPT_ACK_ENABLED` (`false` recommended)
+- `RECEIPT_DONE_NOTIFY_ENABLED` (`true` recommended)
+- `RECEIPT_DONE_NOTIFY_MODE` (`REPLY_THEN_PUSH`, `REPLY_ONLY`, `PUSH_ONLY`; default `REPLY_THEN_PUSH`)
+- `ENABLE_PROCESS_DONE_PUSH` (`true` recommended)
+- `PROCESS_DONE_PUSH_ADMIN_ONLY` (`false` unless testing)
+- `MAX_PROCESS_DONE_PUSH_PER_DAY` (`300` recommended)
 - `WEBHOOK_SECRET`
 - `OWN_COMPANY_ALIASES`
 - `JOB_ALIASES`
@@ -137,10 +144,12 @@ processPendingReceiptJobs(1)
 
 Then send a slip in LINE and confirm:
 
-1. LINE replies immediately with queued message.
+1. LINE does not reply immediately when `RECEIPT_ACK_ENABLED=false`.
 2. `receipt_jobs` gets a `QUEUED` document.
-3. Worker changes the job to `COMPLETED` or `NEEDS_REVIEW`/`FAILED` path.
+3. Worker changes the job to `COMPLETED`, `DUPLICATE_SKIPPED`, `RETRY_PENDING`, or `FAILED`.
 4. `expenses` receives the transaction.
-5. `processLogs` receives execution metrics.
+5. The worker sends one done/duplicate/incomplete/error Flex Card.
+6. `receipt_jobs.notificationStatus` becomes `SENT`, `FAILED`, or `SKIPPED`.
+7. `processLogs` receives execution metrics and `receipt_notification` usage logs.
 
 If the queue fails to create, webhook falls back to inline receipt processing for compatibility.

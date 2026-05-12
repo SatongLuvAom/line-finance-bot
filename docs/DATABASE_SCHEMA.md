@@ -17,7 +17,7 @@ Core transaction fields:
 | `items` | string | Short item/service summary |
 | `note` | string | Important remark text |
 | `job` | string | Project/job display name |
-| `status` | string | `IMPORTED`, `PENDING_REVIEW`, `REJECTED`, or `DELETED` |
+| `status` | string | `IMPORTED`, `NEEDS_REVIEW`, `PARSE_INCOMPLETE`, `PENDING_REVIEW`, `REJECTED`, or `DELETED` |
 | `isActive` | boolean | `true` unless status is `REJECTED` or `DELETED` |
 | `createdAt` | string | ISO timestamp |
 | `updatedAt` | string | ISO timestamp |
@@ -64,6 +64,12 @@ Receipt/source fields:
 | `possibleDuplicateIds` | array | Possible duplicate Firestore document names |
 | `sheetSyncError` | string | Safe Sheet sync error message |
 | `sheetSyncedAt` | string | ISO timestamp when Sheet sync was attempted |
+| `parseMethod` | string | `TEXT_RULE`, `CAPTION_RULE`, `OCR_RULE`, `QR_RULE`, `GEMINI`, or `MANUAL` |
+| `aiUsed` | boolean | `true` when Gemini was called for this transaction |
+| `parserConfidence` | double | Confidence gate score from `0` to `1` |
+| `missingFields` | array | Missing required fields such as `amount`, `date`, `type`, or `scope` |
+| `warnings` | array | Safe parser warnings or conflict flags |
+| `rawParserName` | string | Internal parser name for debugging |
 | `parsedAt` | string | ISO timestamp after Gemini JSON parse |
 | `normalizedAt` | string | ISO timestamp after normalization |
 
@@ -127,7 +133,7 @@ Run each repeatedly until `hasNextPage=false`. Batch size is capped at `200`.
 
 ## Collections: `auditLogs` and `processLogs`
 
-`auditLogs` stores financial safety events such as create/update/delete, AI parse, webhook error, command error, and Sheet sync status changes.
+`auditLogs` stores financial safety events such as create/update/delete, rule parse, AI fallback, AI parse, webhook error, command error, and Sheet sync status changes.
 
 Command errors must include:
 
@@ -179,6 +185,41 @@ createdAt
 | `traceId` | string | Request trace ID |
 | `sourceKey` | string | User/group/room scoped key |
 | `transactionId` | string | Firestore transaction document name after completion |
+
+Receipt completion notification fields:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `replyToken` | string | LINE reply token stored for short-lived reply-after-worker attempts; never log this field |
+| `replyTokenCreatedAt` | string | ISO timestamp when the webhook received the token |
+| `receivedAt` | string | ISO timestamp when the file event was received |
+| `notificationStatus` | string | `PENDING`, `SENT`, `FAILED`, or `SKIPPED` |
+| `notificationMethod` | string | `reply`, `push`, or `skipped` |
+| `doneNotifiedAt` | string | ISO timestamp when the final notification was sent |
+| `doneNotificationCount` | number | Count of completed notifications for safety checks |
+| `canUseReplyToken` | boolean | `false` after reply token failure/expiry detection |
+| `pushAllowed` | boolean | Whether worker may use LINE push for this job |
+| `processDoneMessageId` | string | Reserved for a provider message ID if available |
+| `lastNotifyError` | string | Sanitized notification failure reason |
+
+`notificationStatus=SENT` is the guard that prevents multiple done messages for one receipt job.
+
+## Receipt Notification Logs
+
+`processLogs` stores notification usage with `processName=receipt_notification`.
+
+| Field | Meaning |
+| --- | --- |
+| `jobId` | Receipt job ID |
+| `transactionId` | Saved transaction document name when available |
+| `method` | `reply`, `push`, or `skipped` |
+| `reason` | Sanitized routing reason |
+| `messageType` | `flex` or `text` |
+| `lineUserId` | LINE user ID |
+| `status` | `sent`, `failed`, or `skipped` |
+| `createdAt` | ISO timestamp |
+
+Do not store the full `replyToken`, LINE token, API key, private key, raw file data, or raw OCR payload in notification logs.
 
 ## Transaction review statuses
 

@@ -56,6 +56,18 @@ Use `แก้ล่าสุด field value`.
 
 Use `_` as the delimiter.
 
+Rule-first parsing reads these formats before Gemini. If the note includes `amount` and `date`, the bot can auto-save without Gemini when confidence is high:
+
+```text
+วัสดุ_งานบูธA_สีเทา 1200 2026-05-11
+ค่าแรง_W1_พ.ค._งานบูธA 6208 2026-05-11
+รายรับ_งานบูธA_มัดจำ 5000 2026-05-11
+โรงงาน_ค่าน้ำมัน 900 2026-05-11
+งานบูธA วัสดุ สีเทา 900 2026-05-11
+```
+
+If amount/date are missing from the caption or note, `AI_READ_MODE=FALLBACK_ONLY` lets Gemini read the image/PDF as fallback. If confidence is still not enough, the record is saved as `NEEDS_REVIEW` or `PARSE_INCOMPLETE` and is excluded from budget summaries until edited.
+
 | Use Case | Format | Example |
 | --- | --- | --- |
 | Labor | `ค่าแรง_W1_เม.ย._ชื่องาน` | `ค่าแรง_W1_เม.ย._งานบูธA` |
@@ -128,3 +140,22 @@ These commands manage the asynchronous receipt queue. They are admin-only when `
 | `gas usage วันนี้` | `gas usage วันนี้` | Shows today's process log counters |
 
 Normal slip submission is unchanged for users. Image/PDF events are queued first and processed by the worker.
+
+## Receipt Notification Admin Commands
+
+Receipt submission is silent by default: the bot does not reply when a file is received. It sends one result message only after processing finishes.
+
+| Command | Example | Output | Permission |
+| --- | --- | --- | --- |
+| `line usage วันนี้` | `line usage วันนี้` | Counts today's receipt notifications by reply/push/skipped/failed and flex/text | Admin if configured |
+| `process done push วันนี้` | `process done push วันนี้` | Shows today's process-done push count and configured daily limit | Admin if configured |
+| `notification failed` | `notification failed` | Lists receipt jobs whose done notification failed | Admin if configured |
+| `notification skipped` | `notification skipped` | Lists receipt jobs whose notification was skipped | Admin if configured |
+
+Receipt notifications use this order when `RECEIPT_DONE_NOTIFY_MODE=REPLY_THEN_PUSH`:
+
+```text
+replyMessage if replyToken is still usable
+pushMessage if replyToken expired and push is enabled
+skip/fail safely if no delivery method is available
+```

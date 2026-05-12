@@ -9,6 +9,8 @@ function enqueueReceiptMessage_(event, context) {
   const message = event && event.message || {};
   const msgType = String(message.type || "");
   const fileName = String(message.fileName || "").toLowerCase();
+  const config = getConfig();
+  const ackEnabled = config.receiptAckEnabled === true;
 
   if (msgType === "file" && !fileName.endsWith(".pdf")) {
     replyText(replyToken, "ระบบรองรับเฉพาะรูปภาพ และไฟล์ PDF เท่านั้น");
@@ -24,20 +26,43 @@ function enqueueReceiptMessage_(event, context) {
   try {
     const cachedState = getProcessedReceiptStateByMessageId_(lineMessageId);
     if (cachedState) {
-      replyText(replyToken, buildDuplicateReceiptMessage_(cachedState));
+      if (cachedState === "queued") {
+        if (ackEnabled) {
+          replyText(replyToken, buildReceiptQueuedMessage_({ jobId: buildReceiptJobId_(lineMessageId) }));
+        }
+        return { ok: true, duplicate: true, state: cachedState };
+      }
+      if (ackEnabled) {
+        replyText(replyToken, buildDuplicateReceiptMessage_(cachedState));
+      } else {
+        notifyReceiptDuplicate_(buildReceiptNotificationJobFromEvent_(event, safeContext), {
+          state: cachedState,
+          reason: "message_cache"
+        });
+      }
       return { ok: true, duplicate: true, state: cachedState };
     }
 
     const existingTransaction = findExpenseBySourceMessageId_(lineMessageId);
     if (existingTransaction) {
       rememberProcessedReceiptMessageId_(lineMessageId, "saved");
-      replyText(replyToken, buildDuplicateReceiptMessage_("saved"));
+      if (ackEnabled) {
+        replyText(replyToken, buildDuplicateReceiptMessage_("saved"));
+      } else {
+        notifyReceiptDuplicate_(buildReceiptNotificationJobFromEvent_(event, safeContext), {
+          state: "saved",
+          reason: "sourceMessageId",
+          documentName: existingTransaction.name || ""
+        });
+      }
       return { ok: true, duplicate: true, state: "saved" };
     }
 
     const existingJob = getReceiptJobByLineMessageId_(lineMessageId);
     if (existingJob && existingJob.status !== RECEIPT_JOB_STATUS_FAILED) {
-      replyText(replyToken, buildReceiptQueuedMessage_(existingJob));
+      if (ackEnabled) {
+        replyText(replyToken, buildReceiptQueuedMessage_(existingJob));
+      }
       return { ok: true, duplicate: true, state: "queued", job: existingJob };
     }
     if (existingJob && existingJob.status === RECEIPT_JOB_STATUS_FAILED) {
@@ -47,19 +72,32 @@ function enqueueReceiptMessage_(event, context) {
         lockedBy: "",
         lockedAt: "",
         safeError: "",
+        notificationStatus: RECEIPT_NOTIFICATION_STATUS_PENDING,
+        notificationMethod: "",
+        doneNotifiedAt: "",
+        lastNotifyError: "",
         updatedAt: new Date().toISOString()
       });
       rememberProcessedReceiptMessageId_(lineMessageId, "queued");
-      replyText(replyToken, buildReceiptQueuedMessage_(retriedJob));
+      if (ackEnabled) {
+        replyText(replyToken, buildReceiptQueuedMessage_(retriedJob));
+      }
       return { ok: true, queued: true, job: retriedJob };
     }
 
     const job = createReceiptJobFromLineEvent_(event, safeContext);
     rememberProcessedReceiptMessageId_(lineMessageId, "queued");
-    replyText(replyToken, buildReceiptQueuedMessage_(job));
+    if (ackEnabled) {
+      replyText(replyToken, buildReceiptQueuedMessage_(job));
+    }
     return { ok: true, queued: true, job: job };
   } catch (err) {
     logError_("enqueueReceiptMessage_.fallbackInline", err);
+    if (!ackEnabled) {
+      return processReceipt(event, Object.assign({}, safeContext, {
+        queueFallback: true
+      }));
+    }
     replyText(replyToken, [
       "ระบบคิวมีปัญหา จะประมวลผลสลิปแบบทันทีแทน",
       "อาจใช้เวลานานกว่าปกติ"
@@ -92,13 +130,16 @@ function createReceiptJobFromLineEvent_(event, context) {
   const lineMessageId = String(message.id || "").trim();
   const nowIso = new Date().toISOString();
   const jobId = buildReceiptJobId_(lineMessageId);
-  const actor = getLineActorInfo_(source);
+  const lineUserId = String(source.userId || "").trim();
   const job = {
     jobId: jobId,
     lineMessageId: lineMessageId,
-    lineUserId: actor.lineUserId || String(source.userId || ""),
+    lineUserId: lineUserId,
     lineSourceJson: JSON.stringify(source || {}),
     eventJson: JSON.stringify(safeEvent),
+    replyToken: String(safeEvent.replyToken || ""),
+    replyTokenCreatedAt: nowIso,
+    receivedAt: nowIso,
     eventType: String(safeEvent.type || "message"),
     fileType: String(message.type || ""),
     fileName: String(message.fileName || ""),
@@ -118,7 +159,15 @@ function createReceiptJobFromLineEvent_(event, context) {
     source: RECORD_SOURCE_LINE_BOT,
     traceId: context && context.traceId || "",
     sourceKey: getConversationKey_(source),
-    transactionId: ""
+    transactionId: "",
+    notificationStatus: RECEIPT_NOTIFICATION_STATUS_PENDING,
+    notificationMethod: "",
+    doneNotifiedAt: "",
+    doneNotificationCount: 0,
+    canUseReplyToken: true,
+    pushAllowed: isReceiptDonePushAllowedForUser_(lineUserId),
+    processDoneMessageId: "",
+    lastNotifyError: ""
   };
 
   const payload = { fields: buildReceiptJobFirestoreFields_(job) };
@@ -233,10 +282,14 @@ function processOneReceiptJob(job, guard) {
 
     if (processResult.duplicate) {
       markJobDuplicateSkipped(lockedJob.jobId, processResult.reason || "duplicate");
+      notifyReceiptDuplicate_(lockedJob, processResult);
       return { ok: true, status: RECEIPT_JOB_STATUS_DUPLICATE_SKIPPED };
     }
 
     markJobCompleted(lockedJob.jobId, processResult.documentName || processResult.transactionId || "");
+    notifyReceiptSaved(lockedJob, Object.assign({}, processResult.record || {}, {
+      documentName: processResult.documentName || processResult.transactionId || ""
+    }));
     return { ok: true, status: RECEIPT_JOB_STATUS_COMPLETED };
   } catch (err) {
     if (err && err.isRuntimeGuardStop) {
@@ -246,7 +299,8 @@ function processOneReceiptJob(job, guard) {
 
     const retryCount = Number(lockedJob.retryCount || 0) + 1;
     if (retryCount >= Number(lockedJob.maxRetry || RECEIPT_JOB_DEFAULT_MAX_RETRY)) {
-      markJobFailed(lockedJob.jobId, err);
+      const failedJob = markJobFailed(lockedJob.jobId, err);
+      notifyReceiptProcessingError_(failedJob || lockedJob, err);
       return { ok: false, status: RECEIPT_JOB_STATUS_FAILED, errorMessage: buildUserFriendlyErrorMessage_(err) };
     }
 
@@ -363,6 +417,13 @@ function markJobDuplicateSkipped(jobId, reason) {
     updatedAt: nowIso,
     safeError: String(reason || "duplicate")
   });
+}
+
+function sendReceiptJobCompletionPush_(job, processResult) {
+  const safeResult = processResult || {};
+  const record = safeResult.record || null;
+  if (!record) return false;
+  return notifyReceiptSaved(job, record);
 }
 
 
@@ -569,11 +630,15 @@ function getReceiptJobFromDocument_(doc) {
   const fields = doc && doc.fields || {};
   return {
     documentName: String(doc && doc.name || ""),
+    persisted: true,
     jobId: getFirestoreString_(fields.jobId) || getShortReceiptJobId_(doc && doc.name || ""),
     lineMessageId: getFirestoreString_(fields.lineMessageId),
     lineUserId: getFirestoreString_(fields.lineUserId),
     lineSourceJson: getFirestoreString_(fields.lineSourceJson),
     eventJson: getFirestoreString_(fields.eventJson),
+    replyToken: getFirestoreString_(fields.replyToken),
+    replyTokenCreatedAt: getFirestoreString_(fields.replyTokenCreatedAt),
+    receivedAt: getFirestoreString_(fields.receivedAt),
     eventType: getFirestoreString_(fields.eventType),
     fileType: getFirestoreString_(fields.fileType),
     fileName: getFirestoreString_(fields.fileName),
@@ -595,7 +660,15 @@ function getReceiptJobFromDocument_(doc) {
     source: getFirestoreString_(fields.source),
     traceId: getFirestoreString_(fields.traceId),
     sourceKey: getFirestoreString_(fields.sourceKey),
-    transactionId: getFirestoreString_(fields.transactionId)
+    transactionId: getFirestoreString_(fields.transactionId),
+    notificationStatus: getFirestoreString_(fields.notificationStatus),
+    notificationMethod: getFirestoreString_(fields.notificationMethod),
+    doneNotifiedAt: getFirestoreString_(fields.doneNotifiedAt),
+    doneNotificationCount: getFirestoreNumber(fields.doneNotificationCount),
+    canUseReplyToken: fields.canUseReplyToken ? getFirestoreBoolean_(fields.canUseReplyToken) : true,
+    pushAllowed: fields.pushAllowed ? getFirestoreBoolean_(fields.pushAllowed) : true,
+    processDoneMessageId: getFirestoreString_(fields.processDoneMessageId),
+    lastNotifyError: getFirestoreString_(fields.lastNotifyError)
   };
 }
 

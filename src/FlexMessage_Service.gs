@@ -253,6 +253,24 @@ function buildPlainTextFallback(type, data) {
 }
 
 
+function buildReceiptDuplicatePlainTextFallback_(data) {
+  const payload = data || {};
+  const record = normalizeLineCardTransaction_(payload.record || {});
+  return {
+    type: "text",
+    text: [
+      "สลิปนี้เคยบันทึกแล้ว",
+      "────────────",
+      "สถานะ: ไม่บันทึกซ้ำ",
+      "ยอดเงิน: " + (record.amountText || "-"),
+      "งาน: " + (record.job || "-"),
+      "ร้าน/ผู้รับ: " + (record.merchant || "-"),
+      "วันที่: " + (record.date || "-")
+    ].join("\n")
+  };
+}
+
+
 function buildFlexOrPlainText_(type, data, builder) {
   try {
     const message = builder();
@@ -262,6 +280,9 @@ function buildFlexOrPlainText_(type, data, builder) {
     return message;
   } catch (err) {
     logError_("flexMessage.buildFallback." + String(type || "unknown"), err);
+    if (String(type || "") === "receipt_duplicate") {
+      return buildReceiptDuplicatePlainTextFallback_(data);
+    }
     return buildPlainTextFallback(type, data);
   }
 }
@@ -292,7 +313,15 @@ function normalizeLineCardTransaction_(transaction) {
     status: String(safeRecord.status || RECORD_STATUS_IMPORTED).trim() || RECORD_STATUS_IMPORTED,
     sheetSyncStatus: String(safeRecord.sheetSyncStatus || "-").trim() || "-",
     ocrConfidence: ocrConfidence,
-    ocrConfidenceText: ocrConfidence > 0 ? Math.round(ocrConfidence * 100) + "%" : ""
+    ocrConfidenceText: ocrConfidence > 0 ? Math.round(ocrConfidence * 100) + "%" : "",
+    parseMethod: String(safeRecord.parseMethod || "").trim(),
+    parserConfidence: normalizeParserConfidence_(safeRecord.parserConfidence || 0),
+    parserConfidenceText: Number(safeRecord.parserConfidence || 0) > 0
+      ? Math.round(normalizeParserConfidence_(safeRecord.parserConfidence) * 100) + "%"
+      : "",
+    missingFieldsText: Array.isArray(safeRecord.missingFields)
+      ? safeRecord.missingFields.join(", ")
+      : String(safeRecord.missingFields || "")
   };
 }
 
@@ -338,6 +367,18 @@ function buildTransactionBubble_(record, options) {
 
   if (record.note) {
     rows.push(buildCardMetricRow_("หมายเหตุ", truncateText_(record.note, safeOptions.compact ? 60 : 120)));
+  }
+
+  if (record.parseMethod) {
+    rows.push(buildCardMetricRow_("วิธีอ่าน", getReceiptParseMethodLabel_(record.parseMethod)));
+  }
+
+  if (record.parserConfidenceText) {
+    rows.push(buildCardMetricRow_("ความมั่นใจ", record.parserConfidenceText));
+  }
+
+  if (record.missingFieldsText) {
+    rows.push(buildCardMetricRow_("ข้อมูลที่ขาด", record.missingFieldsText));
   }
 
   if (safeOptions.includeOcrConfidence && record.ocrConfidenceText) {

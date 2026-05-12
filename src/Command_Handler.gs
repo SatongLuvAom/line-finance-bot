@@ -97,6 +97,48 @@ function handleTextMessage(event, context) {
     return;
   }
 
+  if (userText === "line usage วันนี้" || userText.toLowerCase() === "line usage today") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง usage ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildLineNotificationUsageTodayMessage_(getReceiptNotificationUsageTodaySummary_()));
+    return;
+  }
+
+  if (userText === "process done push วันนี้" || userText.toLowerCase() === "process done push today") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง usage ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildProcessDonePushTodayMessage_(getProcessDonePushUsageToday_()));
+    return;
+  }
+
+  if (userText === "notification failed") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง notification ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildReceiptNotificationJobsMessage_(
+      "Notification failed",
+      getReceiptNotificationJobsByStatus_(RECEIPT_NOTIFICATION_STATUS_FAILED, 10)
+    ));
+    return;
+  }
+
+  if (userText === "notification skipped") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง notification ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildReceiptNotificationJobsMessage_(
+      "Notification skipped",
+      getReceiptNotificationJobsByStatus_(RECEIPT_NOTIFICATION_STATUS_SKIPPED, 10)
+    ));
+    return;
+  }
+
   if (userText === "ลบล่าสุด ยืนยัน" || userText.toLowerCase() === "delete latest confirm") {
     if (!checkAdminUser_(event)) {
       replyText(replyToken, "คำสั่งลบข้อมูลใช้ได้เฉพาะผู้ดูแลระบบครับ");
@@ -746,6 +788,56 @@ function buildGasUsageTodayMessage_(summary) {
 }
 
 
+function buildLineNotificationUsageTodayMessage_(summary) {
+  const safeSummary = summary || {};
+  return [
+    `LINE usage วันนี้ ${safeSummary.date || formatDateToYMD(new Date())}`,
+    "────────────",
+    `notification ทั้งหมด: ${safeSummary.totalCount || 0}`,
+    `reply: ${safeSummary.replyCount || 0}`,
+    `push: ${safeSummary.pushCount || 0}`,
+    `skipped: ${safeSummary.skippedCount || 0}`,
+    `failed: ${safeSummary.failedCount || 0}`,
+    `flex: ${safeSummary.flexCount || 0}`,
+    `text: ${safeSummary.textCount || 0}`
+  ].join("\n");
+}
+
+
+function buildProcessDonePushTodayMessage_(summary) {
+  const safeSummary = summary || {};
+  return [
+    `Process done push วันนี้ ${safeSummary.date || formatDateToYMD(new Date())}`,
+    "────────────",
+    `push ที่ใช้: ${safeSummary.pushCount || 0}`,
+    `limit: ${safeSummary.maxPerDay || getConfig().maxProcessDonePushPerDay}`,
+    `คงเหลือโดยประมาณ: ${Math.max(0, Number(safeSummary.maxPerDay || 0) - Number(safeSummary.pushCount || 0))}`
+  ].join("\n");
+}
+
+
+function buildReceiptNotificationJobsMessage_(title, jobs) {
+  const safeJobs = jobs || [];
+  if (!safeJobs.length) {
+    return [
+      title || "Notification jobs",
+      "────────────",
+      "ไม่พบรายการ"
+    ].join("\n");
+  }
+
+  const lines = [title || "Notification jobs", "────────────"];
+  safeJobs.slice(0, 10).forEach(function(job, index) {
+    lines.push(`${index + 1}. ${getShortReceiptJobId_(job.jobId || job.documentName)}`);
+    lines.push(`status: ${job.notificationStatus || "-"}`);
+    lines.push(`method: ${job.notificationMethod || "-"}`);
+    lines.push(`error: ${truncateText_(job.lastNotifyError || "-", 120)}`);
+    lines.push("");
+  });
+  return lines.join("\n");
+}
+
+
 function getShortFirestoreDocumentId_(documentName) {
   const value = String(documentName || "").trim();
   if (!value) return "-";
@@ -860,6 +952,10 @@ function buildHelpMessage_() {
     "retry jobs",
     "failed jobs",
     "gas usage วันนี้",
+    "line usage วันนี้",
+    "process done push วันนี้",
+    "notification failed",
+    "notification skipped",
     "",
     "แก้เมื่อ AI อ่านผิด",
     "แก้ล่าสุด หมวด ค่าแรง",

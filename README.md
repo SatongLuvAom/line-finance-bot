@@ -8,7 +8,7 @@ Receipt image/PDF processing is queued through Firestore `receipt_jobs` to keep 
 
 - LINE webhook entry points with `doPost(e)` and `doGet(e)`.
 - Text commands for help, slip guidance, latest records, edit/delete latest record, project summaries, active jobs this month, labor summaries, and manual labor entry.
-- Receipt flow for LINE image/PDF download, Gemini parsing, normalization, duplicate guard, Firebase Storage upload, Firestore save, optional Sheet report sync, and LINE reply.
+- Receipt flow for LINE image/PDF download, rule-first parsing, Gemini fallback, confidence gate, normalization, duplicate guard, Firebase Storage upload, Firestore save, optional Sheet report sync, and LINE reply/push completion.
 - Labor flow with week/month extraction, confirmation prompts, manual labor save, and labor summaries.
 - Firestore indexed query layer for normal commands to avoid full collection scans.
 - Stable summary query model with `scopeType/scopeKey/monthKey` to avoid Firestore index explosion.
@@ -25,7 +25,7 @@ LINE Webhook
   -> Security.gs
   -> Router.gs
   -> Command_Handler.gs / Receipt_Service.gs
-  -> AI_Engine.gs / AI_Normalizer.gs / AI_BankParser.gs
+  -> Rule_Parser_Service.gs / AI_Engine.gs / AI_Normalizer.gs / AI_BankParser.gs
   -> Firestore_Query.gs / Firestore_Repository.gs
   -> Sheet_Repository.gs / Storage_Repository.gs
   -> Line_UI.gs / Flex_Builder.gs
@@ -62,11 +62,12 @@ Set these in Apps Script Project Settings. Do not hardcode them in source files.
 | Property | Required | Purpose |
 | --- | --- | --- |
 | `LINE_TOKEN` | Yes | LINE Messaging API channel access token |
-| `GEMINI_KEY` | Yes | Gemini API key |
+| `GEMINI_KEY` | Yes unless `AI_READ_MODE=OFF` | Gemini API key |
 | `FIREBASE_PROJECT_ID` | Yes | Firebase/Google Cloud project ID |
 | `FIREBASE_STORAGE_BUCKET` | Recommended | Firebase Storage bucket |
 | `SHEET_ID` | Yes unless `SHEET_SYNC_MODE=OFF` | Google Sheets spreadsheet ID |
 | `SHEET_SYNC_MODE` | Optional | `OFF`, `MANUAL`, `BATCH`, or `REALTIME`; default is `BATCH` |
+| `AI_READ_MODE` | Optional | `OFF`, `FALLBACK_ONLY`, or `ALWAYS`; default is `FALLBACK_ONLY` |
 | `WEBHOOK_SECRET` | Optional | Query-string key guard for webhook URL |
 | `OWN_COMPANY_ALIASES` | Optional | Company names used to detect income vs expense |
 | `JOB_ALIASES` | Optional | One alias rule per line: `Canonical=Alias1,Alias2` |
@@ -115,6 +116,7 @@ See `CLASP.md` for the safe push/pull workflow.
 - `clasp push` uploads code only; it does not upload Script Properties.
 - Do not commit Firebase service account JSON. This project uses Apps Script OAuth token access to Google APIs.
 - Do not commit `.clasp.json`; commit `.clasp.json.example` only.
+- `AI_READ_MODE=FALLBACK_ONLY` is the recommended production default: structured rules are used first and Gemini is called only when required fields are incomplete or confidence is too low.
 - Before using Codex or GitHub PRs, verify `git status` does not include local credentials or generated files.
 - If a secret was ever committed, rotate it immediately before making the repository public.
 

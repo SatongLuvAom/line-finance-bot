@@ -23,9 +23,12 @@ function validateWebhookRequest_(e, traceId) {
 function validateRequiredProperties_() {
   const required = [
     "LINE_TOKEN",
-    "GEMINI_KEY",
     "FIREBASE_PROJECT_ID"
   ];
+  const aiReadMode = normalizeAiReadMode_(getOptionalProperty_("AI_READ_MODE", DEFAULT_AI_READ_MODE));
+  if (aiReadMode !== AI_READ_MODE_OFF) {
+    required.push("GEMINI_KEY");
+  }
   const sheetSyncMode = normalizeSheetSyncMode_(getOptionalProperty_("SHEET_SYNC_MODE", DEFAULT_SHEET_SYNC_MODE));
   if (sheetSyncMode !== SHEET_SYNC_MODE_OFF) {
     required.push("SHEET_ID");
