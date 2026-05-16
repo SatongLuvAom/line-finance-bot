@@ -234,6 +234,8 @@ MAX_PROCESS_DONE_PUSH_PER_DAY=300
 Operational rules:
 
 - `doPost` creates `receipt_jobs` and does not send a received/queued acknowledgement when `RECEIPT_ACK_ENABLED=false`.
+- `doPost` schedules a throttled one-shot `processPendingReceiptJobsFromTrigger` trigger so the worker can run after a receipt is queued.
+- For production reliability, run `installReceiptWorkerTrigger()` once or send the LINE admin command `install worker`. This creates a lightweight every-minute watchdog that exits immediately when there are no queued jobs.
 - The worker sends one result message only after processing finishes.
 - `notificationStatus=SENT` prevents duplicate done messages.
 - Duplicate slips use `DUPLICATE_SKIPPED` and send one duplicate notice.
@@ -250,6 +252,8 @@ notification skipped
 ```
 
 If push usage approaches the daily limit, lower `MAX_PROCESS_DONE_PUSH_PER_DAY` or temporarily set `ENABLE_PROCESS_DONE_PUSH=false`.
+
+If queued jobs do not move, verify the manifest includes `https://www.googleapis.com/auth/script.scriptapp`, then reauthorize Apps Script and send a new slip. Use `install worker` as the normal production fix and `process jobs` only as a manual fallback.
 
 ```text
 retrySheetSync("DOCUMENT_ID_OR_FULL_DOCUMENT_NAME")

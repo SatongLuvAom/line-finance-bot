@@ -70,6 +70,47 @@ function handleTextMessage(event, context) {
     return;
   }
 
+  if (userText === "kick jobs" || userText === "ปลุก jobs") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง queue ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildReceiptWorkerKickMessage_(scheduleReceiptWorkerKick_("admin_command", { force: true })));
+    return;
+  }
+
+  if (userText === "cleanup job triggers" || userText === "ล้าง job triggers") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง queue ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    cleanupReceiptWorkerKickTriggers_();
+    replyText(replyToken, [
+      "Cleanup job triggers finished",
+      "────────────",
+      `worker triggers: ${getReceiptWorkerTriggerCount_()}`
+    ].join("\n"));
+    return;
+  }
+
+  if (userText === "install worker" || userText === "ติดตั้ง worker") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง queue ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildReceiptWorkerInstallMessage_(installReceiptWorkerTrigger()));
+    return;
+  }
+
+  if (userText === "uninstall worker" || userText === "ปิด worker") {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่ง queue ใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildReceiptWorkerUninstallMessage_(uninstallReceiptWorkerTrigger()));
+    return;
+  }
+
   if (userText === "retry jobs" || userText === "ลอง jobs ใหม่") {
     if (!checkAdminUser_(event)) {
       replyText(replyToken, "คำสั่ง queue ใช้ได้เฉพาะผู้ดูแลระบบครับ");
@@ -711,11 +752,62 @@ function buildReceiptJobQueueStatusMessage_(summary) {
     `PROCESSING_PAUSED: ${safeSummary[RECEIPT_JOB_STATUS_PROCESSING_PAUSED] || 0}`,
     `PROCESSING: ${safeSummary[RECEIPT_JOB_STATUS_PROCESSING] || 0}`,
     `FAILED: ${safeSummary[RECEIPT_JOB_STATUS_FAILED] || 0}`,
+    `worker triggers: ${safeSummary.workerTriggerCount}`,
+    `watchdog triggers: ${safeSummary.workerWatchdogTriggerCount || 0}`,
     "",
     "คำสั่งต่อ:",
     "`process jobs`",
+    "`kick jobs`",
+    "`install worker`",
+    "`uninstall worker`",
     "`retry jobs`",
     "`failed jobs`"
+  ].join("\n");
+}
+
+
+function buildReceiptWorkerKickMessage_(result) {
+  const safeResult = result || {};
+  if (safeResult.scheduled) {
+    return [
+      "Receipt worker kick scheduled",
+      "────────────",
+      `delay: ${safeResult.delayMs || RECEIPT_WORKER_KICK_DELAY_MS} ms`
+    ].join("\n");
+  }
+
+  return [
+    "Receipt worker kick not scheduled",
+    "────────────",
+    `ok: ${safeResult.ok === true ? "yes" : "no"}`,
+    `reason: ${safeResult.reason || safeResult.errorMessage || "-"}`
+  ].join("\n");
+}
+
+
+function buildReceiptWorkerInstallMessage_(result) {
+  const safeResult = result || {};
+  return [
+    "Receipt worker watchdog",
+    "────────────",
+    `ok: ${safeResult.ok === true ? "yes" : "no"}`,
+    `installed: ${safeResult.installed === true ? "yes" : "no"}`,
+    `reason: ${safeResult.reason || "-"}`,
+    `watchdog triggers: ${safeResult.watchdogTriggerCount || 0}`,
+    "",
+    "หลังจากนี้ไม่ต้องพิมพ์ `process jobs` เอง ระบบจะเช็กคิวทุก 1 นาที"
+  ].join("\n");
+}
+
+
+function buildReceiptWorkerUninstallMessage_(result) {
+  const safeResult = result || {};
+  return [
+    "Receipt worker watchdog removed",
+    "────────────",
+    `ok: ${safeResult.ok === true ? "yes" : "no"}`,
+    `deleted: ${safeResult.deletedCount || 0}`,
+    `watchdog triggers: ${safeResult.watchdogTriggerCount || 0}`
   ].join("\n");
 }
 
@@ -949,6 +1041,10 @@ function buildHelpMessage_() {
     "รายการ duplicate",
     "jobs ค้าง",
     "process jobs",
+    "kick jobs",
+    "install worker",
+    "uninstall worker",
+    "cleanup job triggers",
     "retry jobs",
     "failed jobs",
     "gas usage วันนี้",

@@ -135,6 +135,9 @@ These commands manage the asynchronous receipt queue. They are admin-only when `
 | --- | --- | --- |
 | `jobs ค้าง` / `queue status` | `queue status` | Counts `QUEUED`, `RETRY_PENDING`, `PROCESSING_PAUSED`, `PROCESSING`, and `FAILED` jobs |
 | `process jobs` | `process jobs` | Manually runs `processPendingReceiptJobs(3)` |
+| `install worker` | `install worker` | Installs the every-minute receipt worker watchdog so admins do not need to type `process jobs` |
+| `uninstall worker` | `uninstall worker` | Removes the receipt worker watchdog |
+| `kick jobs` | `kick jobs` | Schedules a one-shot worker run after the configured delay |
 | `retry jobs` | `retry jobs` | Moves retryable/failed jobs back to `QUEUED` |
 | `failed jobs` | `failed jobs` | Lists latest failed jobs with sanitized errors |
 | `gas usage วันนี้` | `gas usage วันนี้` | Shows today's process log counters |

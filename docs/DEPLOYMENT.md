@@ -14,8 +14,9 @@ The manifest keeps these scopes:
 
 ```json
 [
-  "https://www.googleapis.com/auth/script.external_request",
-  "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/script.scriptapp",
+    "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/datastore",
   "https://www.googleapis.com/auth/cloud-platform"
 ]
@@ -129,11 +130,17 @@ clasp deploy
 Do not commit `.clasp.json` if it exposes project information you do not want shared.
 # Queue Worker Deployment
 
-After pushing Apps Script source, create or verify a time-driven trigger:
+Receipt jobs can now self-kick the worker by creating a one-shot Apps Script trigger after a file is queued. This avoids a permanent every-minute worker trigger for normal usage.
+
+The added manifest scope `https://www.googleapis.com/auth/script.scriptapp` is required for creating this one-shot trigger. After pushing this change, run/authorize any function once if Apps Script asks for new permissions.
+
+Recommended production fallback: install the watchdog trigger once with `installReceiptWorkerTrigger()` or the LINE admin command `install worker`. It runs every minute, exits immediately when there are no queued jobs, and prevents admins from manually typing `process jobs`.
 
 | Function | Trigger | Purpose |
 | --- | --- | --- |
-| `processPendingReceiptJobs` | Time-driven, every 1-5 minutes | Processes queued LINE image/PDF receipt jobs |
+| `processPendingReceiptJobsFromTrigger` | Auto one-shot after file queue | Cleans its own one-shot trigger and processes queued LINE image/PDF receipt jobs |
+| `processPendingReceiptJobsWatchdog` | Optional every-minute watchdog | Checks for queued jobs and processes them only when needed |
+| `processPendingReceiptJobs` | Manual or optional permanent time-driven fallback | Processes queued LINE image/PDF receipt jobs |
 | `processPendingSheetSync` | Optional time-driven trigger | Syncs pending Sheet report rows when using `BATCH` mode |
 
 Manual first-run test:

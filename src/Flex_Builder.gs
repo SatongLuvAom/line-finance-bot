@@ -86,8 +86,6 @@ function createReceiptFlex(data) {
               flexRow("หมวด", data.category),
               flexRow("งาน", data.job),
               flexRow("รายการ", getReceiptItemPreview_(data.items)),
-              data.parseMethod ? flexRow("วิธีอ่าน", getReceiptParseMethodLabel_(data.parseMethod)) : null,
-              data.parserConfidence ? flexRow("ความมั่นใจ", Math.round(Number(data.parserConfidence || 0) * 100) + "%") : null,
               data.missingFields && data.missingFields.length ? flexRow("ข้อมูลที่ขาด", data.missingFields.join(", ")) : null,
               {
                 type: "separator",
@@ -142,33 +140,34 @@ function buildReceiptSavedFlexCard(transaction) {
   try {
     const record = transaction || {};
     const typeLabel = getReceiptTransactionTypeLabel_(record);
+    const isIncome = String(record.type || "expense") === "income";
+    const themeColor = isIncome ? "#0F766E" : "#B42318";
+    const themeSoftColor = isIncome ? "#ECFDF5" : "#FEF3F2";
+    const themeBorderColor = isIncome ? "#A7F3D0" : "#FECDCA";
+    const themeHeaderSubColor = isIncome ? "#CCFBF1" : "#FEE4E2";
     const status = String(record.status || RECORD_STATUS_IMPORTED);
     const isIncomplete = status === RECORD_STATUS_PARSE_INCOMPLETE;
     const needsReview = status === RECORD_STATUS_NEEDS_REVIEW || status === RECORD_STATUS_PENDING_REVIEW;
     const title = isIncomplete
       ? "อ่านสลิปได้ไม่ครบ"
       : (needsReview ? "อ่านสลิปแล้ว รอตรวจสอบ" : "บันทึกสลิปเรียบร้อยแล้ว");
-    const headerColor = isIncomplete ? "#B42318" : (needsReview ? "#B45309" : "#0F766E");
+    const headerColor = isIncomplete ? "#B42318" : (needsReview ? "#B45309" : themeColor);
     const footerText = isIncomplete || needsReview
       ? "รายการนี้ยังไม่ถูกนับในสรุปงบจนกว่าจะแก้ไขและยืนยันข้อมูล"
-      : "Firestore เป็นฐานข้อมูลหลัก และ Sheet จะ sync ตามโหมดที่ตั้งไว้";
+      : "บันทึกข้อมูลเรียบร้อย พร้อมใช้ในรายงานการเงินและการติดตามงบประมาณ";
+    const shortReference = buildShortTransactionReference_(record);
 
     const missingFields = normalizeStringList_(record.missingFields || []);
     const bodyContents = [
-      flexRow("ประเภท", typeLabel),
-      flexRow("ยอดเงิน", "฿" + Number(record.amount || 0).toLocaleString(), true),
+      shortReference ? flexRow("เลขอ้างอิง", shortReference, false, themeColor, true) : null,
+      flexRow("ประเภท", typeLabel, false, themeColor, true),
+      flexRow("ยอดเงิน", "฿" + Number(record.amount || 0).toLocaleString(), true, themeColor),
       flexRow("หมวด", record.category || record.categoryName || "ไม่ระบุหมวด"),
       flexRow("งาน", record.job || record.jobName || "-"),
       flexRow("ร้าน/ผู้รับ", record.merchant || record.vendorName || "ไม่ระบุร้าน"),
       flexRow("วันที่", record.date || record.occurredAt || "ไม่ระบุวันที่")
-    ];
+    ].filter(Boolean);
 
-    if (record.parseMethod) {
-      bodyContents.push(flexRow("วิธีอ่าน", getReceiptParseMethodLabel_(record.parseMethod)));
-    }
-    if (record.parserConfidence) {
-      bodyContents.push(flexRow("ความมั่นใจ", Math.round(Number(record.parserConfidence || 0) * 100) + "%"));
-    }
     if (missingFields.length) {
       bodyContents.push(flexRow("ข้อมูลที่ขาด", missingFields.join(", ")));
     }
@@ -189,7 +188,7 @@ function buildReceiptSavedFlexCard(transaction) {
           paddingAll: "20px",
           paddingBottom: "15px",
           contents: [
-            { type: "text", text: "YUPPIE FINANCE", color: "#ECFEFF", size: "xs", weight: "bold" },
+            { type: "text", text: "YUPPIE FINANCE", color: themeHeaderSubColor, size: "xs", weight: "bold" },
             { type: "text", text: title, weight: "bold", size: "xl", color: "#FFFFFF", margin: "md", wrap: true }
           ]
         },
@@ -203,10 +202,10 @@ function buildReceiptSavedFlexCard(transaction) {
               type: "box",
               layout: "vertical",
               spacing: "sm",
-              backgroundColor: "#F8FAFC",
+              backgroundColor: themeSoftColor,
               paddingAll: "16px",
               cornerRadius: "10px",
-              borderColor: "#E2E8F0",
+              borderColor: themeBorderColor,
               borderWidth: "1px",
               contents: bodyContents
             }
@@ -245,6 +244,7 @@ function buildReceiptSavedPlainText(transaction) {
       title,
       "────────────",
       "ประเภท: " + getReceiptTransactionTypeLabel_(record),
+      buildShortTransactionReference_(record) ? "เลขอ้างอิง: " + buildShortTransactionReference_(record) : "",
       "ยอดเงิน: ฿" + Number(record.amount || 0).toLocaleString(),
       "หมวด: " + String(record.category || record.categoryName || "ไม่ระบุหมวด"),
       "งาน: " + String(record.job || record.jobName || "-"),
@@ -268,7 +268,27 @@ function getReceiptTransactionTypeLabel_(record) {
 }
 
 
-function flexRow(label, value, isHighlight) {
+function buildShortTransactionReference_(record) {
+  const safeRecord = record || {};
+  const type = String(safeRecord.type || "expense") === "income" ? "INC" : "EXP";
+  const rawId = String(
+    safeRecord.shortReference ||
+    safeRecord.transactionId ||
+    safeRecord.documentName ||
+    safeRecord.recordId ||
+    ""
+  ).trim();
+  if (!rawId) return "";
+
+  const documentId = rawId.split("/").filter(Boolean).pop() || rawId;
+  const compactId = documentId.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  if (!compactId) return "";
+
+  return type + "-" + compactId.slice(-5);
+}
+
+
+function flexRow(label, value, isHighlight, valueColor, isBold) {
   const highlight = !!isHighlight;
   return {
     type: "box",
@@ -287,8 +307,8 @@ function flexRow(label, value, isHighlight) {
         text: String(value || "-"),
         wrap: true,
         size: highlight ? "md" : "sm",
-        color: highlight ? "#B42318" : "#111827",
-        weight: highlight ? "bold" : "regular",
+        color: valueColor || (highlight ? "#B42318" : "#111827"),
+        weight: highlight || isBold ? "bold" : "regular",
         flex: 7,
         align: "end"
       }

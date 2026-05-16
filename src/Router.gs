@@ -65,11 +65,11 @@ function routeTextCommand_(event, text, context) {
 }
 
 function routeImageMessage_(event, context) {
-  return enqueueReceiptMessage_(event, context || {});
+  return handleReceiptMessage(event, context || {});
 }
 
 function routeFileMessage_(event, context) {
-  return enqueueReceiptMessage_(event, context || {});
+  return handleReceiptMessage(event, context || {});
 }
 
 function routePostback_(event, context) {

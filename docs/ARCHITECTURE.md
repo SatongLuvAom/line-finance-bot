@@ -178,6 +178,7 @@ This supersedes any older queue-ack behavior:
 LINE image/file/pdf event
   -> doPost verifies and creates receipt_jobs
   -> no "received file" reply when RECEIPT_ACK_ENABLED=false
+  -> queue schedules one-shot processPendingReceiptJobs trigger
   -> worker processes receipt_jobs
   -> worker writes Firestore transaction
   -> worker sends exactly one done/duplicate/incomplete/error notification
@@ -207,8 +208,9 @@ Receipt image/PDF processing now uses a lightweight webhook plus Firestore queue
 2. Route text commands directly to `handleTextMessage()`.
 3. For LINE image/PDF/file events, run only line-message duplicate checks.
 4. Create a `receipt_jobs` document with `status=QUEUED`.
-5. Do not send a queued acknowledgement when `RECEIPT_ACK_ENABLED=false`.
-6. End the webhook request.
+5. Schedule a throttled one-shot worker trigger with `ScriptApp.newTrigger(processPendingReceiptJobsFromTrigger)`.
+6. Do not send a queued acknowledgement when `RECEIPT_ACK_ENABLED=false`.
+7. End the webhook request.
 
 The webhook must not run Gemini OCR, Firebase Storage upload, large PDF processing, batch Sheet sync, or long loops.
 

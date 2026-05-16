@@ -114,7 +114,7 @@ function processReceipt(event, context) {
 
     markProcessStage_(perfLogger, "parsing_start", "ok", {});
     assertCanContinue("receipt_parse", runtimeGuard);
-    let normalized = parseReceiptWithRuleFirst_(event, lineFile, {
+    let normalized = parseReceiptWithGeminiOnly_(event, lineFile, {
       context: safeContext,
       perfLogger: perfLogger,
       runtimeGuard: runtimeGuard,
@@ -451,6 +451,43 @@ function parseReceiptWithRuleFirst_(event, lineFile, options) {
   }
 }
 
+
+function parseReceiptWithGeminiOnly_(event, lineFile, options) {
+  const safeOptions = options || {};
+  const perfLogger = safeOptions.perfLogger || null;
+  const runtimeGuard = safeOptions.runtimeGuard || createRuntimeGuard();
+  const traceId = String(safeOptions.traceId || "");
+  const lineUserId = event && event.source && event.source.userId || "";
+
+  markProcessStage_(perfLogger, "gemini_ocr_start", "ok", {
+    mimeType: lineFile.mimeType,
+    aiReadMode: AI_READ_MODE_ALWAYS
+  });
+
+  assertCanContinue("gemini_ocr", runtimeGuard);
+  const geminiResult = analyzeReceiptWithGemini(lineFile.base64Data, lineFile.mimeType);
+  markProcessStage_(perfLogger, "gemini_ocr_end", "ok", {
+    model: geminiResult.model || ""
+  });
+
+  const cleanJson = geminiResult.parsedData || parseGeminiReceiptJson(geminiResult.data);
+  logAiParsingResult_(traceId, cleanJson, "ok", "");
+  const normalized = normalizeReceiptData(cleanJson);
+  const geminiParsedResult = buildGeminiParsedResult_(cleanJson, normalized);
+  const finalRecord = applyParserMetadataToRecord_(normalized, geminiParsedResult, {
+    aiUsed: true,
+    status: RECORD_STATUS_IMPORTED
+  });
+
+  logParserAudit_("AI_DIRECT_USED", geminiParsedResult, {
+    traceId: traceId,
+    lineUserId: lineUserId,
+    status: "ok"
+  });
+  logReceiptParserStatusAudit_(finalRecord, traceId, lineUserId);
+  return finalRecord;
+}
+
 function getReceiptRuleTextFromEvent_(event, context) {
   const safeEvent = event || {};
   const message = safeEvent.message || {};
@@ -571,7 +608,7 @@ function saveReceiptRecord_(replyToken, record, meta) {
     errorMessage: sheetSync.errorMessage || ""
   });
 
-  const messages = buildReceiptCompletionMessages_(record, sheetSync);
+  const messages = buildReceiptCompletionMessages_(record, sheetSync, savedDoc && savedDoc.name || "");
 
   markProcessStage_(perfLogger, "line_reply_start", "ok", {
     messageCount: messages.length
@@ -592,10 +629,12 @@ function saveReceiptRecord_(replyToken, record, meta) {
   };
 }
 
-function buildReceiptCompletionMessages_(record, sheetSync) {
+function buildReceiptCompletionMessages_(record, sheetSync, transactionId) {
   return [
     buildReceiptSavedFlexCard(Object.assign({}, record || {}, {
-      sheetSyncStatus: sheetSync && sheetSync.sheetSyncStatus || record && record.sheetSyncStatus || ""
+      sheetSyncStatus: sheetSync && sheetSync.sheetSyncStatus || record && record.sheetSyncStatus || "",
+      transactionId: String(transactionId || record && record.transactionId || ""),
+      documentName: String(transactionId || record && record.documentName || "")
     }))
   ];
 }

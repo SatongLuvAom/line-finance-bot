@@ -63,6 +63,7 @@ function enqueueReceiptMessage_(event, context) {
       if (ackEnabled) {
         replyText(replyToken, buildReceiptQueuedMessage_(existingJob));
       }
+      scheduleReceiptWorkerKick_("existing_queued_job");
       return { ok: true, duplicate: true, state: "queued", job: existingJob };
     }
     if (existingJob && existingJob.status === RECEIPT_JOB_STATUS_FAILED) {
@@ -82,6 +83,7 @@ function enqueueReceiptMessage_(event, context) {
       if (ackEnabled) {
         replyText(replyToken, buildReceiptQueuedMessage_(retriedJob));
       }
+      scheduleReceiptWorkerKick_("failed_job_requeued");
       return { ok: true, queued: true, job: retriedJob };
     }
 
@@ -90,6 +92,7 @@ function enqueueReceiptMessage_(event, context) {
     if (ackEnabled) {
       replyText(replyToken, buildReceiptQueuedMessage_(job));
     }
+    scheduleReceiptWorkerKick_("new_receipt_job");
     return { ok: true, queued: true, job: job };
   } catch (err) {
     logError_("enqueueReceiptMessage_.fallbackInline", err);
@@ -120,6 +123,134 @@ function buildReceiptQueuedMessage_(job) {
     "Job: " + getShortReceiptJobId_(safeJob.jobId || safeJob.documentName),
     "ดูสถานะได้ด้วยคำสั่ง `queue status`"
   ].join("\n");
+}
+
+
+function scheduleReceiptWorkerKick_(reason, options) {
+  const safeOptions = options || {};
+  if (RECEIPT_WORKER_AUTO_KICK_ENABLED !== true) {
+    return { ok: true, skipped: true, reason: "auto_kick_disabled" };
+  }
+
+  const cache = CacheService.getScriptCache();
+  const cacheKey = "receipt_worker_kick_scheduled";
+  if (safeOptions.force) {
+    cleanupReceiptWorkerKickTriggers_();
+    cache.remove(cacheKey);
+  }
+  if (!safeOptions.force && cache.get(cacheKey)) {
+    return { ok: true, skipped: true, reason: "kick_recently_scheduled" };
+  }
+
+  try {
+    ScriptApp.newTrigger(RECEIPT_WORKER_TRIGGER_HANDLER)
+      .timeBased()
+      .after(RECEIPT_WORKER_KICK_DELAY_MS)
+      .create();
+    cache.put(cacheKey, "1", RECEIPT_WORKER_KICK_CACHE_TTL_SEC);
+    logInfo_("receiptJobs.workerKick.scheduled", {
+      reason: String(reason || ""),
+      delayMs: RECEIPT_WORKER_KICK_DELAY_MS
+    });
+    return {
+      ok: true,
+      scheduled: true,
+      delayMs: RECEIPT_WORKER_KICK_DELAY_MS
+    };
+  } catch (err) {
+    logError_("receiptJobs.workerKick.error", err);
+    return {
+      ok: false,
+      errorMessage: buildUserFriendlyErrorMessage_(err)
+    };
+  }
+}
+
+
+function processPendingReceiptJobsFromTrigger() {
+  cleanupReceiptWorkerKickTriggers_();
+  return processPendingReceiptJobs(RECEIPT_JOB_DEFAULT_BATCH_SIZE);
+}
+
+
+function processPendingReceiptJobsWatchdog() {
+  if (!hasPendingReceiptJobs_()) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "no_pending_receipt_jobs",
+      processedCount: 0
+    };
+  }
+  return processPendingReceiptJobs(RECEIPT_JOB_DEFAULT_BATCH_SIZE);
+}
+
+
+function installReceiptWorkerTrigger() {
+  const existingCount = getReceiptWorkerWatchdogTriggerCount_();
+  if (existingCount > 0) {
+    return {
+      ok: true,
+      installed: false,
+      reason: "already_installed",
+      watchdogTriggerCount: existingCount
+    };
+  }
+
+  ScriptApp.newTrigger(RECEIPT_WORKER_WATCHDOG_HANDLER)
+    .timeBased()
+    .everyMinutes(1)
+    .create();
+
+  return {
+    ok: true,
+    installed: true,
+    watchdogTriggerCount: getReceiptWorkerWatchdogTriggerCount_()
+  };
+}
+
+
+function uninstallReceiptWorkerTrigger() {
+  let deletedCount = 0;
+  ScriptApp.getProjectTriggers().forEach(function(trigger) {
+    const handler = trigger.getHandlerFunction && trigger.getHandlerFunction();
+    if (handler === RECEIPT_WORKER_WATCHDOG_HANDLER) {
+      ScriptApp.deleteTrigger(trigger);
+      deletedCount += 1;
+    }
+  });
+
+  return {
+    ok: true,
+    deletedCount: deletedCount,
+    watchdogTriggerCount: getReceiptWorkerWatchdogTriggerCount_()
+  };
+}
+
+
+function cleanupReceiptWorkerKickTriggers_() {
+  try {
+    ScriptApp.getProjectTriggers().forEach(function(trigger) {
+      const handler = trigger.getHandlerFunction && trigger.getHandlerFunction();
+      if (handler === RECEIPT_WORKER_TRIGGER_HANDLER || handler === "processPendingReceiptJobs") {
+        ScriptApp.deleteTrigger(trigger);
+      }
+    });
+    CacheService.getScriptCache().remove("receipt_worker_kick_scheduled");
+  } catch (err) {
+    logError_("receiptJobs.workerKick.cleanup.error", err);
+  }
+}
+
+
+function cleanupReceiptWorkerKickTriggers() {
+  cleanupReceiptWorkerKickTriggers_();
+  return "OK";
+}
+
+
+function hasPendingReceiptJobs_() {
+  return getPendingReceiptJobs_(1).length > 0;
 }
 
 
@@ -242,6 +373,9 @@ function processPendingReceiptJobs(batchSize) {
     }
 
     logInfo_("receiptJobs.worker.done", result);
+    if (hasPendingReceiptJobs_()) {
+      scheduleReceiptWorkerKick_("pending_jobs_after_worker");
+    }
     return result;
   } finally {
     try {
@@ -457,7 +591,38 @@ function getReceiptJobQueueStatus_() {
   statuses.forEach(function(status) {
     result[status] = getReceiptJobsByStatus_(status, 50).length;
   });
+  result.workerTriggerCount = getReceiptWorkerTriggerCount_();
+  result.workerWatchdogTriggerCount = getReceiptWorkerWatchdogTriggerCount_();
   return result;
+}
+
+
+function getReceiptWorkerTriggerCount_() {
+  try {
+    return ScriptApp.getProjectTriggers().filter(function(trigger) {
+      if (!trigger.getHandlerFunction) return false;
+      const handler = trigger.getHandlerFunction();
+      return handler === "processPendingReceiptJobs" ||
+        handler === RECEIPT_WORKER_TRIGGER_HANDLER ||
+        handler === RECEIPT_WORKER_WATCHDOG_HANDLER;
+    }).length;
+  } catch (err) {
+    logError_("receiptJobs.workerTriggerCount.error", err);
+    return -1;
+  }
+}
+
+
+function getReceiptWorkerWatchdogTriggerCount_() {
+  try {
+    return ScriptApp.getProjectTriggers().filter(function(trigger) {
+      if (!trigger.getHandlerFunction) return false;
+      return trigger.getHandlerFunction() === RECEIPT_WORKER_WATCHDOG_HANDLER;
+    }).length;
+  } catch (err) {
+    logError_("receiptJobs.workerWatchdogTriggerCount.error", err);
+    return -1;
+  }
 }
 
 
