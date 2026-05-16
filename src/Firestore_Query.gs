@@ -283,6 +283,9 @@ function buildExpenseQueryKeys_(record) {
   const jobNameNormalized = normalizeJobAlias_(safeRecord.job || "งานทั่วไป") || "งานทั่วไป";
   const isFactoryExpense = isFactoryExpenseRecord_(safeRecord, jobNameNormalized);
   const jobId = buildStableEntityId_("job", jobNameNormalized);
+  const projectNameNormalized = normalizeProjectAlias_(extractProjectNameFromJobName_(jobNameNormalized));
+  const projectId = buildStableEntityId_("project", projectNameNormalized || jobNameNormalized);
+  const projectSearchKeys = buildProjectSearchKeysFromJobName_(jobNameNormalized);
   const summaryScope = buildSummaryScopeKeys_(safeRecord, {
     jobNameNormalized: jobNameNormalized,
     jobId: jobId,
@@ -296,6 +299,9 @@ function buildExpenseQueryKeys_(record) {
     weekKey: `${monthKey}-W${weekNumber}`,
     jobId: jobId,
     jobNameNormalized: jobNameNormalized,
+    projectId: projectId,
+    projectNameNormalized: projectNameNormalized || jobNameNormalized,
+    projectSearchKeys: projectSearchKeys,
     costCenter: isFactoryExpense ? FACTORY_COST_CENTER : "",
     scope: isFactoryExpense ? FACTORY_SCOPE : PROJECT_SCOPE,
     scopeType: summaryScope.scopeType,
@@ -437,6 +443,59 @@ function isFactoryExpenseRecord_(record, normalizedJobName) {
 
   const jobName = normalizeJobAlias_(normalizedJobName || safeRecord.job || "");
   return normalizeComparableText_(jobName) === normalizeComparableText_(FACTORY_JOB_NAME);
+}
+
+
+function extractProjectNameFromJobName_(jobName) {
+  const input = String(jobName || "").trim();
+  if (!input) return "";
+
+  const delimiterParts = input.split(/[_|/\\:]+/).map(function(part) {
+    return String(part || "").trim();
+  }).filter(Boolean);
+  if (delimiterParts.length > 1) {
+    return delimiterParts[delimiterParts.length - 1];
+  }
+
+  return stripProjectPrefix_(input) || input;
+}
+
+
+function buildProjectSearchKeysFromJobName_(jobName) {
+  const input = String(jobName || "").trim();
+  if (!input) return [];
+
+  const candidates = [
+    input,
+    extractProjectNameFromJobName_(input),
+    stripProjectPrefix_(input)
+  ];
+
+  input.split(/[_|/\\:\-]+/).forEach(function(part) {
+    candidates.push(String(part || "").trim());
+  });
+
+  input.split(/\s+/).forEach(function(part) {
+    const token = String(part || "").trim();
+    if (/^[a-z0-9][a-z0-9._-]*$/i.test(token)) {
+      candidates.push(token);
+    }
+  });
+
+  return uniqueStrings_(candidates.map(function(candidate) {
+    const normalized = normalizeProjectAlias_(normalizeJobAlias_(candidate || ""));
+    return normalized ? buildStableEntityId_("project", normalized) : "";
+  })).filter(function(key) {
+    return key && key !== "project_unknown";
+  });
+}
+
+
+function stripProjectPrefix_(text) {
+  return String(text || "")
+    .trim()
+    .replace(/^(?:งาน|โปรเจกต์|โปรเจค|project)[\s:_\-\/\\]*/i, "")
+    .trim();
 }
 
 
@@ -644,6 +703,34 @@ function getJobTotalSummaryByJobId(jobId) {
       { field: "isActive", value: true },
       { field: "status", value: RECORD_STATUS_IMPORTED },
       { field: "jobId", value: String(jobId || "").trim() }
+    ],
+    limit: 1000,
+    selectFields: getExpenseLightSelectFields_()
+  }).map(getFirestoreRecordFromDocument_);
+}
+
+
+function getJobTotalSummaryByProjectId(projectId) {
+  return queryExpenses({
+    queryName: "summary_job_total_by_project_id",
+    filters: [
+      { field: "isActive", value: true },
+      { field: "status", value: RECORD_STATUS_IMPORTED },
+      { field: "projectId", value: String(projectId || "").trim() }
+    ],
+    limit: 1000,
+    selectFields: getExpenseLightSelectFields_()
+  }).map(getFirestoreRecordFromDocument_);
+}
+
+
+function getJobTotalSummaryByProjectSearchKey(projectKey) {
+  return queryExpenses({
+    queryName: "summary_job_total_by_project_search_key",
+    filters: [
+      { field: "isActive", value: true },
+      { field: "status", value: RECORD_STATUS_IMPORTED },
+      { field: "projectSearchKeys", op: "ARRAY_CONTAINS", value: String(projectKey || "").trim() }
     ],
     limit: 1000,
     selectFields: getExpenseLightSelectFields_()

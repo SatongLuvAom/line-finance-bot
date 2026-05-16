@@ -76,6 +76,8 @@ const DEFAULT_JOB_ALIASES = [
   }
 ];
 
+const DEFAULT_PROJECT_ALIASES = [];
+
 const DEFAULT_CATEGORY_ALIASES = [
   {
     canonical: "ค่าขนส่ง",
@@ -217,6 +219,9 @@ const FIRESTORE_EXPENSE_LIST_FIELD_MASKS = [
   "job",
   "jobId",
   "jobNameNormalized",
+  "projectId",
+  "projectNameNormalized",
+  "projectSearchKeys",
   "costCenter",
   "scope",
   "scopeType",
@@ -369,6 +374,7 @@ function getConfig() {
     webhookSecret: getOptionalScriptProperty_(props, "WEBHOOK_SECRET"),
     ownCompanyAliases: getListScriptProperty_(props, "OWN_COMPANY_ALIASES", DEFAULT_OWN_COMPANY_HINTS),
     jobAliases: getMapListScriptProperty_(props, "JOB_ALIASES").concat(DEFAULT_JOB_ALIASES),
+    projectAliases: getMapListScriptProperty_(props, "PROJECT_ALIASES").concat(DEFAULT_PROJECT_ALIASES),
     merchantAliases: getMapListScriptProperty_(props, "MERCHANT_ALIASES").concat(DEFAULT_MERCHANT_ALIASES),
     categoryAliases: getMapListScriptProperty_(props, "CATEGORY_ALIASES").concat(DEFAULT_CATEGORY_ALIASES),
     itemAliases: getMapListScriptProperty_(props, "ITEM_ALIASES").concat(DEFAULT_ITEM_ALIASES)

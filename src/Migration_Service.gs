@@ -85,6 +85,9 @@ function updateExpenseQueryKeys_(doc) {
     weekKey: { stringValue: queryKeys.weekKey },
     jobId: { stringValue: queryKeys.jobId },
     jobNameNormalized: { stringValue: queryKeys.jobNameNormalized },
+    projectId: { stringValue: queryKeys.projectId },
+    projectNameNormalized: { stringValue: queryKeys.projectNameNormalized },
+    projectSearchKeys: buildFirestoreStringArrayField_(queryKeys.projectSearchKeys),
     costCenter: { stringValue: queryKeys.costCenter },
     scope: { stringValue: queryKeys.scope },
     scopeType: { stringValue: queryKeys.scopeType },
@@ -298,6 +301,9 @@ function updateSummaryScopeKeys_(doc) {
     reviewNeeded: { booleanValue: queryKeys.reviewNeeded },
     jobId: { stringValue: queryKeys.jobId },
     jobNameNormalized: { stringValue: queryKeys.jobNameNormalized },
+    projectId: { stringValue: queryKeys.projectId },
+    projectNameNormalized: { stringValue: queryKeys.projectNameNormalized },
+    projectSearchKeys: buildFirestoreStringArrayField_(queryKeys.projectSearchKeys),
     costCenter: { stringValue: queryKeys.costCenter },
     updatedAt: { stringValue: new Date().toISOString() }
   };

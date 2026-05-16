@@ -642,13 +642,46 @@ function testJobSummaryFallbackUsesJobId_() {
   return {
     ok: true,
     primaryQuery: {
-      queryName: "summary_job_total",
-      filters: ["isActive", "status", "scopeType", "scopeKey"]
+      queryName: "summary_job_total_by_project_search_key",
+      filters: ["isActive", "status", "projectSearchKeys"]
+    },
+    secondaryQuery: {
+      queryName: "summary_job_total_by_project_id",
+      filters: ["isActive", "status", "projectId"]
     },
     fallbackQuery: {
       queryName: "summary_job_total_by_job_id",
       filters: ["isActive", "status", "jobId"]
     }
+  };
+}
+
+
+function testProjectSearchKeysBroadMatching_() {
+  const brazilKey = buildStableEntityId_("project", normalizeProjectAlias_("Brazil"));
+  const cases = [
+    "Brazil",
+    "งาน Brazil",
+    "งานBrazil",
+    "Project Brazil",
+    "งานเคาท์เตอร์_Brazil",
+    "งานเคาท์เตอร์-Brazil",
+    "งานเคาท์เตอร์/Brazil"
+  ];
+  const results = cases.map(function(value) {
+    return {
+      input: value,
+      projectName: extractProjectNameFromJobName_(value),
+      keys: buildProjectSearchKeysFromJobName_(value)
+    };
+  });
+
+  return {
+    ok: results.every(function(result) {
+      return result.keys.indexOf(brazilKey) !== -1;
+    }),
+    expectedKey: brazilKey,
+    results: results
   };
 }
 
@@ -664,8 +697,11 @@ function testSummaryQueriesDoNotUseDuplicateKeys_() {
   const jobFields = [
     "isActive",
     "status",
+    "projectSearchKeys",
+    "projectId",
     "scopeType",
-    "scopeKey"
+    "scopeKey",
+    "jobId"
   ];
   const banned = ["fileHash", "fingerprint", "duplicateStatus", "categoryId"];
   return {

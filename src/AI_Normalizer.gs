@@ -169,6 +169,16 @@ function normalizeJobAlias_(jobName) {
   return normalizeAliasFromMaps_(original, config.jobAliases || []);
 }
 
+function normalizeProjectAlias_(projectName) {
+  const original = String(projectName || "").trim();
+  if (!original) {
+    return "";
+  }
+
+  const config = getConfig();
+  return normalizeAliasFromMaps_(original, config.projectAliases || []);
+}
+
 function normalizeMerchantAlias_(merchantName) {
   const original = String(merchantName || "").trim();
   if (!original || original === "ไม่ระบุผู้รับ" || original === "ไม่ระบุร้านค้า") {

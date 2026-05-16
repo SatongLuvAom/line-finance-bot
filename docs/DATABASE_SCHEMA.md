@@ -31,6 +31,9 @@ Indexed query keys:
 | `weekKey` | string | `YYYY-MM-WN`, used by labor summaries |
 | `jobId` | string | Stable normalized ID from `jobNameNormalized` |
 | `jobNameNormalized` | string | Canonical job name after `JOB_ALIASES` |
+| `projectId` | string | Stable project ID used by project summaries, e.g. `project_brazil` |
+| `projectNameNormalized` | string | Project name extracted from job name; the last `_` segment is used when present |
+| `projectSearchKeys` | array | Multiple stable project keys for broad project matching |
 | `scopeType` | string | `FACTORY`, `JOB`, or `UNKNOWN` |
 | `scopeKey` | string | `FACTORY`, `jobId`, or blank for unknown scope |
 | `reviewNeeded` | boolean | `true` when scope cannot be inferred safely |
@@ -91,7 +94,7 @@ Budget and active-job summaries use one fixed model:
 | Scope | Required Values |
 | --- | --- |
 | Factory / central expense | `status=IMPORTED`, `isActive=true`, `monthKey=YYYY-MM`, `scopeType=FACTORY`, `scopeKey=FACTORY` |
-| Customer project/job | `status=IMPORTED`, `isActive=true`, `scopeType=JOB`, `scopeKey=jobId`; project summaries intentionally do not filter by month |
+| Customer project/job | `status=IMPORTED`, `isActive=true`, `projectSearchKeys ARRAY_CONTAINS projectKey`; fallback uses `projectId`, then `scopeType=JOB`, `scopeKey=jobId`; project summaries intentionally do not filter by month |
 | Unknown | `scopeType=UNKNOWN`, `scopeKey=""`, `reviewNeeded=true`; excluded from normal summaries |
 
 Summary queries must not use `fileHash`, `fingerprint`, `duplicateStatus`, dynamic category filters, or `orderBy`.
@@ -106,6 +109,8 @@ These indexes are the stable production set for current command/query flows:
 | Latest global/dev fallback | `isActive ASC`, `createdAt DESC`, `__name__ DESC` |
 | Summary by scope/month | `isActive ASC`, `status ASC`, `monthKey ASC`, `scopeType ASC`, `scopeKey ASC` |
 | Summary by job total | `isActive ASC`, `status ASC`, `scopeType ASC`, `scopeKey ASC` |
+| Summary by project total | `isActive ASC`, `status ASC`, `projectId ASC` |
+| Summary by project search keys | `isActive ASC`, `status ASC`, `projectSearchKeys CONTAINS` |
 | Summary by jobId fallback | `isActive ASC`, `status ASC`, `jobId ASC` |
 | Labor summary by week | `isActive ASC`, `status ASC`, `categoryId ASC`, `weekKey ASC` |
 | Sheet sync errors | `isActive ASC`, `sheetSyncStatus ASC`, `updatedAt DESC`, `__name__ DESC` |

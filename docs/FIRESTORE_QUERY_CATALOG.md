@@ -12,7 +12,9 @@ This catalog documents the allowed query shapes for normal bot commands. Do not 
 | `ล่าสุด 5` | `handleTextMessage()` -> `getRecentExpenseRecords_()` -> `getLatestTransactionDocumentsBySourceKey_()` | `isActive`, `sourceKey` | `createdAt DESC` | `1..10` | `isActive ASC`, `sourceKey ASC`, `createdAt DESC`, `__name__ DESC` | Text command only. |
 | `งานเดือนนี้` | `handleTextMessage()` -> `getActiveJobsThisMonthText_()` -> `getMonthlySummary()` -> `getSummaryTransactionsByMonth()` | `isActive`, `status`, `monthKey` | none | `1000` | `isActive ASC`, `status ASC`, `monthKey ASC` | Groups by `scopeType/scopeKey` in memory after bounded query. |
 | `สรุปงบ โรงงาน` | `handleTextMessage()` -> `handleFactorySummaryCommand()` -> `getFactoryMonthlySummary()` -> `getSummaryTransactionsByScope_()` | `isActive`, `status`, `monthKey`, `scopeType`, `scopeKey` | none | `500` | `isActive ASC`, `status ASC`, `monthKey ASC`, `scopeType ASC`, `scopeKey ASC` | Monthly factory/central expense summary only. |
-| `สรุปงบ งาน...` | `handleTextMessage()` -> `handleJobSummaryCommand()` -> `getJobTotalSummary()` -> `getSummaryTransactionsByScopeTotal_()` | `isActive`, `status`, `scopeType`, `scopeKey` | none | `1000` | `isActive ASC`, `status ASC`, `scopeType ASC`, `scopeKey ASC` | Total project summary across all months. |
+| `สรุปงบ งาน...` | `handleTextMessage()` -> `handleJobSummaryCommand()` -> `getJobSummaryRecordsByProjectSearchKeys_()` | `isActive`, `status`, `projectSearchKeys ARRAY_CONTAINS` | none | `1000` per search key | `isActive ASC`, `status ASC`, `projectSearchKeys CONTAINS` | Total project summary across all months. Handles job names with `_`, `/`, `-`, prefix words, and English project tokens. |
+| `สรุปงบ งาน...` fallback | `handleJobSummaryCommand()` -> `getJobTotalSummaryByProjectId()` | `isActive`, `status`, `projectId` | none | `1000` | `isActive ASC`, `status ASC`, `projectId ASC` | Used when `projectSearchKeys` has not been backfilled yet. |
+| `สรุปงบ งาน...` fallback | `handleJobSummaryCommand()` -> `getJobTotalSummary()` -> `getSummaryTransactionsByScopeTotal_()` | `isActive`, `status`, `scopeType`, `scopeKey` | none | `1000` | `isActive ASC`, `status ASC`, `scopeType ASC`, `scopeKey ASC` | Used when `projectId` has not been backfilled yet. |
 | `สรุปงบ งาน...` fallback | `handleJobSummaryCommand()` -> `getJobTotalSummaryByJobId()` | `isActive`, `status`, `jobId` | none | `1000` | `isActive ASC`, `status ASC`, `jobId ASC` | Used only when old records do not have `scopeType/scopeKey` yet. |
 | `ค่าแรง สัปดาห์ที่ X เดือน Y` | `handleTextMessage()` -> `getLaborSummaryByWeekAndMonth()` -> `getLaborTransactionsByWeek()` | `isActive`, `status`, `categoryId`, `weekKey` | none | `500` | `isActive ASC`, `status ASC`, `categoryId ASC`, `weekKey ASC` | Excludes pending/rejected/deleted rows. |
 | `sync error` | `handleTextMessage()` -> `getSheetSyncErrors()` | `isActive`, `sheetSyncStatus` | `updatedAt DESC` | `10` | `isActive ASC`, `sheetSyncStatus ASC`, `updatedAt DESC`, `__name__ DESC` | Admin command. |
@@ -31,7 +33,8 @@ This catalog documents the allowed query shapes for normal bot commands. Do not 
 
 - `สรุปงบ โรงงาน` is monthly only and must include current `monthKey`.
 - `สรุปงบ งาน...` is total across all months and must not include `monthKey`.
-- If `สรุปงบ งาน...` finds no rows by `scopeType/scopeKey`, it may fallback to indexed `jobId` without `monthKey`.
+- `สรุปงบ งาน...` should use `projectSearchKeys` first, then `projectId`, then fallback to `scopeType/scopeKey`, then `jobId`.
+- `projectSearchKeys` contains multiple stable project keys derived from the full job name, delimiter segments, stripped prefix names, and English/number tokens. Example: `งานเคาท์เตอร์_Brazil` includes `project_brazil`.
 - Summary commands must not query `fileHash`, `fingerprint`, or `duplicateStatus`.
 - Summary commands that only total amounts must not use `orderBy`.
 - Text commands must not download LINE files, call Gemini, or run duplicate checks.

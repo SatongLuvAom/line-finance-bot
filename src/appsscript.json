@@ -8,7 +8,7 @@
     "https://www.googleapis.com/auth/script.scriptapp",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/datastore",
-    "https://www.googleapis.com/auth/cloud-platform"
+    "https://www.googleapis.com/auth/devstorage.read_write"
   ],
   "webapp": {
     "executeAs": "USER_DEPLOYING",

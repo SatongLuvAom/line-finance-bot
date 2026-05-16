@@ -52,6 +52,26 @@ function handleTextMessage(event, context) {
     return;
   }
 
+  if (userText === "งานทั้งหมด" || userText.toLowerCase() === "all projects") {
+    replyText(replyToken, getProjectDirectoryText_());
+    return;
+  }
+
+  if (userText === "alias งาน" || userText === "เอเลียสงาน" || userText.toLowerCase() === "project aliases") {
+    replyText(replyToken, buildProjectAliasMessage_());
+    return;
+  }
+
+  const addProjectAliasMatch = userText.match(/^(?:เพิ่ม alias งาน|เพิ่มเอเลียสงาน|add project alias|add job alias)\s+(.+)$/i);
+  if (addProjectAliasMatch) {
+    if (!checkAdminUser_(event)) {
+      replyText(replyToken, "คำสั่งเพิ่ม alias งานใช้ได้เฉพาะผู้ดูแลระบบครับ");
+      return;
+    }
+    replyText(replyToken, buildAddProjectAliasResultMessage_(addProjectAliasRule_(addProjectAliasMatch[1])));
+    return;
+  }
+
   if (userText === "jobs ค้าง" || userText.toLowerCase() === "queue status") {
     if (!checkAdminUser_(event)) {
       replyText(replyToken, "คำสั่ง queue ใช้ได้เฉพาะผู้ดูแลระบบครับ");
@@ -1006,6 +1026,104 @@ function formatRecordOneLine_(record) {
   ].join(" | ");
 }
 
+function buildProjectAliasMessage_() {
+  const aliases = getConfig().projectAliases || [];
+  if (!aliases.length) {
+    return [
+      "Project Aliases",
+      "────────────",
+      "ยังไม่มี alias งาน",
+      "",
+      "เพิ่มได้ด้วย:",
+      "เพิ่ม alias งาน Brazil=บราซิล,งานบราซิล"
+    ].join("\n");
+  }
+
+  const lines = [
+    "Project Aliases",
+    "────────────"
+  ];
+  aliases.slice(0, 50).forEach(function(rule) {
+    lines.push(`${rule.canonical} = ${(rule.aliases || []).join(", ")}`);
+  });
+  if (aliases.length > 50) {
+    lines.push(`...และอีก ${aliases.length - 50} rules`);
+  }
+  lines.push("");
+  lines.push("เพิ่ม alias:");
+  lines.push("เพิ่ม alias งาน Brazil=บราซิล,งานบราซิล");
+  return lines.join("\n");
+}
+
+
+function addProjectAliasRule_(rawRule) {
+  const parsedRule = parseProjectAliasRule_(rawRule);
+  const props = PropertiesService.getScriptProperties();
+  const existingRules = getMapListScriptProperty_(props, "PROJECT_ALIASES");
+  const canonicalComparable = normalizeComparableText_(parsedRule.canonical);
+  let merged = false;
+
+  const nextRules = existingRules.map(function(rule) {
+    if (normalizeComparableText_(rule.canonical) !== canonicalComparable) {
+      return rule;
+    }
+    merged = true;
+    return {
+      canonical: parsedRule.canonical,
+      aliases: uniqueStrings_((rule.aliases || []).concat(parsedRule.aliases))
+    };
+  });
+
+  if (!merged) {
+    nextRules.push(parsedRule);
+  }
+
+  props.setProperty("PROJECT_ALIASES", nextRules.map(function(rule) {
+    return `${rule.canonical}=${(rule.aliases || []).join(",")}`;
+  }).join("\n"));
+  clearConfigRuntimeCache_();
+
+  return {
+    ok: true,
+    canonical: parsedRule.canonical,
+    aliases: parsedRule.aliases,
+    merged: merged
+  };
+}
+
+
+function parseProjectAliasRule_(rawRule) {
+  const text = String(rawRule || "").trim();
+  const parts = text.split("=");
+  const canonical = String(parts.shift() || "").trim();
+  const aliases = parts.join("=").split(",").map(function(alias) {
+    return String(alias || "").trim();
+  }).filter(Boolean);
+
+  if (!canonical || !aliases.length) {
+    throw new Error("รูปแบบต้องเป็น: เพิ่ม alias งาน Brazil=บราซิล,งานบราซิล");
+  }
+
+  return {
+    canonical: canonical,
+    aliases: uniqueStrings_(aliases)
+  };
+}
+
+
+function buildAddProjectAliasResultMessage_(result) {
+  const safeResult = result || {};
+  return [
+    "เพิ่ม alias งานเรียบร้อย",
+    "────────────",
+    `งานหลัก: ${safeResult.canonical || "-"}`,
+    `alias: ${(safeResult.aliases || []).join(", ") || "-"}`,
+    `โหมด: ${safeResult.merged ? "อัปเดต rule เดิม" : "เพิ่ม rule ใหม่"}`,
+    "",
+    "รัน backfillExpenseQueryKeys(100) เพื่อเติม projectSearchKeys ให้รายการเก่า"
+  ].join("\n");
+}
+
 
 function buildHelpMessage_() {
   return [
@@ -1021,6 +1139,9 @@ function buildHelpMessage_() {
     "ดูวิธีละเอียด: วิธีส่งสลิป",
     "",
     "ดูข้อมูล",
+    "งานทั้งหมด",
+    "alias งาน",
+    "เพิ่ม alias งาน Brazil=บราซิล,งานบราซิล",
     "งานเดือนนี้",
     "สรุปงบ งานบูธA",
     "สรุปงบ โรงงาน",

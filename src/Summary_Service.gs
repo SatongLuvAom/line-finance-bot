@@ -17,6 +17,8 @@ function parseBudgetSummaryCommand_(text) {
   const inputText = String(text || "").trim();
   const subjectText = inputText.replace(/^สรุปงบ\s+/i, "").trim();
   const normalizedJobQuery = normalizeJobAlias_(subjectText || inputText);
+  const projectNameNormalized = normalizeProjectAlias_(normalizeJobAlias_(extractProjectNameFromJobName_(normalizedJobQuery)));
+  const projectSearchKeys = buildProjectSearchKeysFromJobName_(normalizedJobQuery);
   if (isFactorySummaryQuery_(normalizedJobQuery)) {
     return {
       commandType: "FACTORY_MONTHLY_SUMMARY",
@@ -31,6 +33,7 @@ function parseBudgetSummaryCommand_(text) {
   }
 
   const jobId = buildStableEntityId_("job", normalizedJobQuery);
+  const projectId = buildStableEntityId_("project", projectNameNormalized || normalizedJobQuery);
   return {
     commandType: "JOB_TOTAL_SUMMARY",
     inputText: inputText,
@@ -38,6 +41,9 @@ function parseBudgetSummaryCommand_(text) {
     scopeType: SUMMARY_SCOPE_TYPE_JOB,
     scopeKey: jobId,
     jobId: jobId,
+    projectId: projectId,
+    projectNameNormalized: projectNameNormalized,
+    projectSearchKeys: projectSearchKeys,
     periodType: "ALL",
     monthKey: ""
   };
@@ -113,8 +119,23 @@ function handleJobSummaryCommand(text, context) {
     }
 
     const startedAt = Date.now();
-    let queryName = "summary_job_total";
-    let records = getJobTotalSummary(parsedCommand.jobId);
+    let queryName = "summary_job_total_by_project_search_key";
+    let records = getJobSummaryRecordsByProjectSearchKeys_(parsedCommand.projectSearchKeys || []);
+    if (!records.length) {
+      queryName = "summary_job_total_by_project_id";
+    }
+    try {
+      if (!records.length) {
+        records = getJobTotalSummaryByProjectId(parsedCommand.projectId);
+      }
+    } catch (projectQueryErr) {
+      logError("handleJobSummaryCommand.projectIdFallback.error", projectQueryErr);
+      queryName = "summary_job_total_project_id_failed";
+    }
+    if (!records.length) {
+      queryName = "summary_job_total";
+      records = getJobTotalSummary(parsedCommand.jobId);
+    }
     if (!records.length) {
       queryName = "summary_job_total_by_job_id";
       records = getJobTotalSummaryByJobId(parsedCommand.jobId);
@@ -151,6 +172,22 @@ function handleJobSummaryCommand(text, context) {
 
 function buildJobSummaryLogFilters_(parsedCommand, queryName) {
   const safeParsed = parsedCommand || {};
+  if (queryName === "summary_job_total_by_project_search_key") {
+    return [
+      { field: "isActive", value: true },
+      { field: "status", value: RECORD_STATUS_IMPORTED },
+      { field: "projectSearchKeys", op: "ARRAY_CONTAINS", value: (safeParsed.projectSearchKeys || [])[0] || "" }
+    ];
+  }
+
+  if (queryName === "summary_job_total_by_project_id") {
+    return [
+      { field: "isActive", value: true },
+      { field: "status", value: RECORD_STATUS_IMPORTED },
+      { field: "projectId", value: safeParsed.projectId || "" }
+    ];
+  }
+
   if (queryName === "summary_job_total_by_job_id") {
     return [
       { field: "isActive", value: true },
@@ -178,6 +215,9 @@ function logSummaryCommand_(parsedCommand, queryName, filters, resultCount, elap
       scopeType: safeParsed.scopeType || "",
       scopeKey: safeParsed.scopeKey || "",
       jobId: safeParsed.jobId || "",
+      projectId: safeParsed.projectId || "",
+      projectNameNormalized: safeParsed.projectNameNormalized || "",
+      projectSearchKeys: safeParsed.projectSearchKeys || [],
       periodType: safeParsed.periodType || "",
       monthKey: safeParsed.monthKey || ""
     },
@@ -186,6 +226,109 @@ function logSummaryCommand_(parsedCommand, queryName, filters, resultCount, elap
     resultCount: Number(resultCount || 0),
     elapsedMs: Number(elapsedMs || 0)
   });
+}
+
+
+function getJobSummaryRecordsByProjectSearchKeys_(projectSearchKeys) {
+  const keys = uniqueStrings_(projectSearchKeys || []).filter(Boolean).slice(0, 10);
+  const byDocumentName = {};
+  const records = [];
+
+  keys.forEach(function(key) {
+    try {
+      getJobTotalSummaryByProjectSearchKey(key).forEach(function(record) {
+        const docName = String(record && record.documentName || "");
+        if (!docName || byDocumentName[docName]) return;
+        byDocumentName[docName] = true;
+        records.push(record);
+      });
+    } catch (err) {
+      logError("getJobSummaryRecordsByProjectSearchKeys_.error", err);
+    }
+  });
+
+  return records;
+}
+
+
+function getProjectDirectoryText_() {
+  try {
+    const docs = queryExpenses({
+      queryName: "project_directory",
+      filters: [
+        { field: "isActive", value: true },
+        { field: "status", value: RECORD_STATUS_IMPORTED }
+      ],
+      limit: 1000,
+      selectFields: getExpenseLightSelectFields_()
+    });
+    const projects = {};
+    docs.map(getFirestoreRecordFromDocument_).forEach(function(record) {
+      const normalized = normalizeSummaryTransaction_(record);
+      if (!normalized.isActive || normalized.status !== RECORD_STATUS_IMPORTED) return;
+
+      const projectName = normalizeProjectAlias_(
+        record.projectNameNormalized ||
+        extractProjectNameFromJobName_(record.jobNameNormalized || record.job || normalized.jobName)
+      );
+      const projectId = record.projectId || buildStableEntityId_("project", projectName);
+      if (!projectName || projectId === "project_unknown") return;
+
+      if (!projects[projectId]) {
+        projects[projectId] = {
+          name: projectName,
+          count: 0,
+          totalExpense: 0,
+          totalIncome: 0,
+          latestDate: ""
+        };
+      }
+      projects[projectId].count += 1;
+      if (normalized.type === "income") {
+        projects[projectId].totalIncome += normalized.amount;
+      } else {
+        projects[projectId].totalExpense += normalized.amount;
+      }
+      if (normalized.occurredAt > projects[projectId].latestDate) {
+        projects[projectId].latestDate = normalized.occurredAt;
+      }
+    });
+
+    const items = Object.keys(projects).map(function(projectId) {
+      return projects[projectId];
+    }).sort(function(a, b) {
+      return (b.totalExpense + b.totalIncome) - (a.totalExpense + a.totalIncome);
+    });
+
+    if (!items.length) {
+      return "ยังไม่พบโปรเจกต์ที่บันทึกแล้ว";
+    }
+
+    const lines = [
+      "งานทั้งหมด",
+      "────────────",
+      "พิมพ์ `สรุปงบ ชื่องาน` เพื่อดูงบของงานนั้น",
+      ""
+    ];
+    items.slice(0, 50).forEach(function(item) {
+      lines.push(
+        `- ${item.name}: ${item.count} รายการ | จ่าย ${formatCurrency_(item.totalExpense)} | รับ ${formatCurrency_(item.totalIncome)}`
+      );
+    });
+    if (items.length > 50) {
+      lines.push(`...และอีก ${items.length - 50} งาน`);
+    }
+    return lines.join("\n");
+  } catch (err) {
+    logError("getProjectDirectoryText_.error", err);
+    return [
+      "งานทั้งหมดดูไม่ได้ชั่วคราว",
+      "────────────",
+      "กำลังใช้รายการงานเดือนนี้แทน",
+      "",
+      getActiveJobsThisMonthText_()
+    ].join("\n");
+  }
 }
 
 

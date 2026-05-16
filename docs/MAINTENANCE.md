@@ -106,6 +106,9 @@ Rules:
 ```text
 scopeType
 scopeKey
+projectId
+projectNameNormalized
+projectSearchKeys
 monthKey
 isActive
 status

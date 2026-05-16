@@ -10,6 +10,8 @@ All commands are sent as LINE text messages. Command calculations read from Fire
 | `วิธีส่งสลิป` | `วิธีส่งสลิป` | Slip and note-format guide | Allowed user |
 | `หมายเหตุค่าใช้จ่าย` | `หมายเหตุค่าใช้จ่าย` | Recommended structured note formats | Allowed user |
 | `เทส` / `test` | `เทส` | Bot status plus Group ID or User ID | Allowed user |
+| `งานทั้งหมด` | `งานทั้งหมด` | Known project list from imported Firestore records | Allowed user |
+| `alias งาน` | `alias งาน` | Current project alias rules | Allowed user |
 | `งานเดือนนี้` | `งานเดือนนี้` | Current-month active scopes grouped by job/factory | Allowed user |
 | `สรุปงบ งาน...` | `สรุปงบ งานบูธA` | Total job budget summary across all months | Allowed user |
 | `สรุปงบ โรงงาน` | `สรุปงบ โรงงาน` | Current-month factory/central expense summary | Allowed user |
@@ -36,6 +38,7 @@ All commands are sent as LINE text messages. Command calculations read from Fire
 | `sync error retry` | `sync error retry` | Retry up to 10 rows with `sheetSyncStatus=ERROR` | Admin if configured |
 | `retry sync ...` | `retry sync DOCUMENT_ID` | Retry Sheet sync for one transaction | Admin if configured |
 | `รายการ duplicate` / `รายการซ้ำ` / `duplicate` | `รายการ duplicate` | Show possible duplicate records | Admin if configured |
+| `เพิ่ม alias งาน ...` | `เพิ่ม alias งาน Brazil=บราซิล,งานบราซิล` | Add or merge a `PROJECT_ALIASES` rule | Admin if configured |
 
 ## Editable Latest Fields
 

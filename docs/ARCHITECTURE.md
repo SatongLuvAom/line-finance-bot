@@ -9,12 +9,14 @@ Normal LINE text commands read from Firestore only. Summary commands use a fixed
 ```text
 scopeType = FACTORY | JOB | UNKNOWN
 scopeKey  = FACTORY | jobId | ""
+projectId = stable project key, e.g. project_brazil
+projectSearchKeys = broad project keys for matching alternate job names
 monthKey  = YYYY-MM (factory monthly summary and active jobs only)
 status    = IMPORTED
 isActive  = true
 ```
 
-Factory expenses use `scopeType=FACTORY`, `scopeKey=FACTORY`, and current `monthKey` for `สรุปงบ โรงงาน`. Project expenses use `scopeType=JOB` and `scopeKey=jobId` for `สรุปงบ งาน...`, intentionally without `monthKey` so multi-month projects are totaled together. Unknown rows are excluded from normal summaries and marked `reviewNeeded=true`.
+Factory expenses use `scopeType=FACTORY`, `scopeKey=FACTORY`, and current `monthKey` for `สรุปงบ โรงงาน`. Project expenses use `projectSearchKeys` first for `สรุปงบ งาน...`, intentionally without `monthKey` so multi-month projects are totaled together. Job names such as `งานเคาท์เตอร์_Brazil`, `Brazil_เคาท์เตอร์`, `งาน Brazil`, and `Project Brazil` can all include `project_brazil`. Unknown rows are excluded from normal summaries and marked `reviewNeeded=true`.
 
 Receipt/image/PDF processing is the only flow that may use `sourceMessageId`, `fileHash`, `fingerprint`, OCR, or Gemini. Text summary commands must never call duplicate-check or file-processing functions.
 

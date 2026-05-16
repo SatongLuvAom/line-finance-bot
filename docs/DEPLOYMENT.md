@@ -18,7 +18,7 @@ The manifest keeps these scopes:
     "https://www.googleapis.com/auth/script.scriptapp",
     "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/datastore",
-  "https://www.googleapis.com/auth/cloud-platform"
+  "https://www.googleapis.com/auth/devstorage.read_write"
 ]
 ```
 
@@ -100,7 +100,7 @@ Optional development:
 2. Enable Firestore Native mode.
 3. Enable Firebase Storage.
 4. Set `FIREBASE_STORAGE_BUCKET` to the bucket name, for example `project-id.appspot.com`.
-5. Apps Script uses `ScriptApp.getOAuthToken()` with Cloud Platform scope.
+5. Apps Script uses `ScriptApp.getOAuthToken()` with `datastore` for Firestore and `devstorage.read_write` for Firebase Storage.
 6. Create the composite indexes listed in `firestore.indexes.json`.
 7. After deploying the summary scope refactor, run `backfillSummaryScopeKeys(100)` repeatedly until `hasNextPage=false`.
 
