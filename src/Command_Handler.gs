@@ -388,6 +388,24 @@ function handleTextMessage(event, context) {
     return;
   }
 
+  const editRecordMatch = userText.match(/^แก้รายการ\s+(\S+)\s+(\S+)\s+(.+)$/i);
+  if (editRecordMatch) {
+    const result = updateExpenseRecordById_(
+      editRecordMatch[1],
+      editRecordMatch[2],
+      editRecordMatch[3],
+      { lineUserId: event.source && event.source.userId || "" }
+    );
+    if (result && result.oldRecord) {
+      forgetReceiptProcessCacheForRecord_(result.oldRecord);
+    }
+    if (result && result.record) {
+      forgetReceiptProcessCacheForRecord_(result.record);
+    }
+    replyText(replyToken, buildEditLatestMessage_(result, "แก้รายการเรียบร้อย"));
+    return;
+  }
+
   const editLatestMatch = userText.match(/^แก้ล่าสุด\s+(\S+)\s+(.+)$/i);
   if (editLatestMatch) {
     const result = updateLatestExpenseRecord_(
@@ -980,7 +998,7 @@ function buildDuplicateRecordsMessage_(records) {
 }
 
 
-function buildEditLatestMessage_(result) {
+function buildEditLatestMessage_(result, title) {
   if (!result || !result.ok) {
     const reason = result && result.reason ? result.reason : "unknown";
     const help = [
@@ -994,7 +1012,8 @@ function buildEditLatestMessage_(result) {
       "`แก้ล่าสุด รายการ เหล็กกล่อง`",
       "`แก้ล่าสุด ผู้รับ นายสมชาย`",
       "`แก้ล่าสุด ยอด 6208`",
-      "`แก้ล่าสุด สัปดาห์ 1`"
+      "`แก้ล่าสุด สัปดาห์ 1`",
+      "`แก้รายการ DOCUMENT_ID สัปดาห์ 1`"
     ];
     return help.join("\n");
   }
@@ -1004,7 +1023,7 @@ function buildEditLatestMessage_(result) {
     : `Google Sheet: ${result.sheetUpdated ? "อัปเดตแล้ว" : "ไม่พบแถวเดิมที่ตรงกัน"}`;
 
   return [
-    "แก้รายการล่าสุดเรียบร้อย",
+    title || "แก้รายการล่าสุดเรียบร้อย",
     "────────────",
     formatRecordOneLine_(result.record),
     `งาน: ${result.record.job || "-"}`,
@@ -1294,7 +1313,34 @@ function handlePendingReviewCommand_(event) {
     return;
   }
 
-  sendLineMessages(event.replyToken, records.slice(0, 5).map(buildPendingReviewCard));
+  replyText(event.replyToken, buildPendingReviewRecordsMessage_(records));
+}
+
+
+function buildPendingReviewRecordsMessage_(records) {
+  const safeRecords = records || [];
+  const lines = [
+    "รายการรอตรวจสอบ",
+    "────────────"
+  ];
+
+  safeRecords.slice(0, 10).forEach(function(record, index) {
+    const id = getShortFirestoreDocumentId_(record.documentName);
+    lines.push(`${index + 1}. ID: ${id}`);
+    lines.push(formatRecordOneLine_(record));
+    lines.push(`งาน: ${record.job || "-"}`);
+    lines.push(`ขาด/เตือน: ${normalizeStringList_(record.missingFields || record.warnings || []).join(", ") || record.status || "-"}`);
+    lines.push("");
+  });
+
+  lines.push("แก้รายการเก่า:");
+  lines.push("`แก้รายการ ID สัปดาห์ 1`");
+  lines.push("`แก้รายการ ID ผู้รับ นายสมชาย`");
+  lines.push("`แก้รายการ ID งาน Brazil`");
+  lines.push("");
+  lines.push("ถ้าเป็นรายการล่าสุด ใช้:");
+  lines.push("`แก้ล่าสุด สัปดาห์ 1`");
+  return lines.join("\n");
 }
 
 function handleEditLatestCommand_(event, field, value) {

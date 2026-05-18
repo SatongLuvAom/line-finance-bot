@@ -217,16 +217,30 @@ function processReceipt(event, context) {
     const laborResolution = resolveLaborWeekForRecord_(normalized, {
       forceConfirmationWhenMissingWeek: normalized.category === LABOR_CATEGORY_NAME && !normalized.laborWeek
     });
-    if (laborResolution.requiresConfirmation || normalized.merchantNeedsConfirmation) {
+    const needsLaborWeekConfirmation = laborResolution.requiresConfirmation === true;
+    const needsMerchantConfirmation = normalized.merchantNeedsConfirmation === true;
+    if (needsLaborWeekConfirmation || needsMerchantConfirmation) {
       normalized.status = RECORD_STATUS_NEEDS_REVIEW;
-      normalized.note = [
-        normalized.note || "",
-        laborResolution.requiresConfirmation ? "NEEDS_REVIEW: missing labor week" : "",
-        normalized.merchantNeedsConfirmation ? "NEEDS_REVIEW: missing merchant" : ""
-      ].filter(Boolean).join(" | ");
+      normalized.missingFields = uniqueStrings_((normalized.missingFields || []).concat([
+        needsLaborWeekConfirmation ? "laborWeek" : "",
+        needsMerchantConfirmation ? "merchant" : ""
+      ]).filter(Boolean));
+      normalized.warnings = uniqueStrings_((normalized.warnings || []).concat([
+        needsLaborWeekConfirmation ? "NEEDS_REVIEW: missing labor week" : "",
+        needsMerchantConfirmation ? "NEEDS_REVIEW: missing merchant" : ""
+      ]).filter(Boolean));
     }
 
     normalized = applyLaborPeriodToRecord_(normalized, laborResolution.week, laborResolution.month);
+    const pendingLaborConfirmation = buildReceiptLaborConfirmationPayload_(
+      event.source,
+      normalized,
+      laborResolution,
+      {
+        needsWeek: needsLaborWeekConfirmation,
+        needsMerchant: needsMerchantConfirmation
+      }
+    );
     const saveResult = saveReceiptRecord_(replyToken, normalized, {
       sourceMessageId: sourceMessageId,
       sourceKey: sourceKey,
@@ -240,7 +254,8 @@ function processReceipt(event, context) {
       duplicateStatus: normalized.duplicateStatus,
       possibleDuplicateIds: normalized.possibleDuplicateIds || [],
       perfLogger: perfLogger,
-      suppressLineReply: suppressLineReply
+      suppressLineReply: suppressLineReply,
+      pendingLaborConfirmation: pendingLaborConfirmation
     });
     if (shouldRunContentDuplicateCheck_(normalized)) {
       rememberRecentReceiptState_(normalized, "saved");
@@ -608,7 +623,11 @@ function saveReceiptRecord_(replyToken, record, meta) {
     errorMessage: sheetSync.errorMessage || ""
   });
 
-  const messages = buildReceiptCompletionMessages_(record, sheetSync, savedDoc && savedDoc.name || "");
+  savePendingReceiptLaborConfirmationAfterCreate_(safeMeta.pendingLaborConfirmation, record, savedDoc && savedDoc.name || "", safeMeta);
+
+  const messages = buildReceiptCompletionMessages_(record, sheetSync, savedDoc && savedDoc.name || "", {
+    quickReplyTexts: getPendingLaborConfirmationQuickReplyTexts_(safeMeta.pendingLaborConfirmation)
+  });
 
   markProcessStage_(perfLogger, "line_reply_start", "ok", {
     messageCount: messages.length
@@ -629,14 +648,83 @@ function saveReceiptRecord_(replyToken, record, meta) {
   };
 }
 
-function buildReceiptCompletionMessages_(record, sheetSync, transactionId) {
-  return [
-    buildReceiptSavedFlexCard(Object.assign({}, record || {}, {
+function buildReceiptCompletionMessages_(record, sheetSync, transactionId, options) {
+  const safeOptions = options || {};
+  const message = buildReceiptSavedFlexCard(Object.assign({}, record || {}, {
       sheetSyncStatus: sheetSync && sheetSync.sheetSyncStatus || record && record.sheetSyncStatus || "",
       transactionId: String(transactionId || record && record.transactionId || ""),
       documentName: String(transactionId || record && record.documentName || "")
-    }))
-  ];
+    }));
+  const quickReply = buildQuickReply_(safeOptions.quickReplyTexts || []);
+  if (quickReply && message && typeof message === "object") {
+    message.quickReply = quickReply;
+  }
+  return [message];
+}
+
+
+function buildReceiptLaborConfirmationPayload_(source, record, resolution, state) {
+  const safeState = state || {};
+  if (!safeState.needsWeek && !safeState.needsMerchant) {
+    return null;
+  }
+
+  const confirmation = {
+    needsWeek: safeState.needsWeek === true,
+    needsMerchant: safeState.needsMerchant === true,
+    weekOptions: ["1", "2", "3", "4", "5"]
+  };
+
+  return {
+    type: "receipt_update",
+    source: source || {},
+    confirmation: confirmation,
+    quickReplyTexts: buildLaborConfirmationQuickReplyTexts_({
+      options: confirmation.weekOptions
+    }, confirmation)
+  };
+}
+
+
+function savePendingReceiptLaborConfirmationAfterCreate_(pending, record, documentName, meta) {
+  const safePending = pending || null;
+  if (!safePending || !safePending.source || !documentName) {
+    return false;
+  }
+
+  const confirmation = safePending.confirmation || {};
+  if (!confirmation.needsWeek && !confirmation.needsMerchant) {
+    return false;
+  }
+
+  const safeMeta = meta || {};
+  savePendingLaborConfirmation_(safePending.source, {
+    type: "receipt_update",
+    record: buildPendingLaborRecordSnapshot_(Object.assign({}, record || {}, {
+      documentName: documentName,
+      transactionId: documentName
+    }), documentName),
+    confirmation: confirmation,
+    meta: {
+      documentName: String(documentName || ""),
+      sourceMessageId: String(safeMeta.sourceMessageId || ""),
+      sourceKey: String(safeMeta.sourceKey || ""),
+      lineUserId: String(record && record.createdByLineUserId || safeMeta.lineUserId || "")
+    }
+  });
+  return true;
+}
+
+
+function getPendingLaborConfirmationQuickReplyTexts_(pending) {
+  const safePending = pending || null;
+  if (!safePending) {
+    return [];
+  }
+  return safePending.quickReplyTexts || buildLaborConfirmationQuickReplyTexts_(
+    { options: ["1", "2", "3", "4", "5"] },
+    safePending.confirmation || {}
+  );
 }
 
 function buildSheetSyncWarningMessage_(errorMessage) {

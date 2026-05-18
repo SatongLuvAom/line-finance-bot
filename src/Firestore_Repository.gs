@@ -573,7 +573,25 @@ function updateLatestExpenseRecord_(sourceKey, fieldText, rawValue, actor) {
     };
   }
 
-  const oldRecord = getFirestoreRecordFromDocument_(latestDoc);
+  return updateExpenseDocumentField_(latestDoc, fieldText, rawValue, actor, "update_latest");
+}
+
+
+function updateExpenseRecordById_(transactionId, fieldText, rawValue, actor) {
+  const doc = getExpenseDocumentByIdOrName_(transactionId);
+  if (!doc) {
+    return {
+      ok: false,
+      reason: "not_found"
+    };
+  }
+
+  return updateExpenseDocumentField_(doc, fieldText, rawValue, actor, "update_by_id");
+}
+
+
+function updateExpenseDocumentField_(doc, fieldText, rawValue, actor, target) {
+  const oldRecord = getFirestoreRecordFromDocument_(doc);
   const newRecord = Object.assign({}, oldRecord);
   const field = normalizeEditableFieldName_(fieldText);
   const value = String(rawValue || "").trim();
@@ -657,13 +675,13 @@ function updateLatestExpenseRecord_(sourceKey, fieldText, rawValue, actor) {
 
   updateFirestoreDocument_(newRecord);
   const sheetSync = handleSheetSyncAfterFirestoreSave_(newRecord.documentName, {
-    target: "update_latest",
+    target: target || "update",
     actorLineUserId: actor && actor.lineUserId || "",
     recordStatus: newRecord.status
   });
   const sheetUpdated = !!(sheetSync && sheetSync.ok && !sheetSync.skipped);
   logUpdateExpense_(oldRecord, newRecord, {
-    recordId: latestDoc && latestDoc.name || "",
+    recordId: doc && doc.name || "",
     lineUserId: actor && actor.lineUserId || ""
   });
 

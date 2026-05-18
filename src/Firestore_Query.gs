@@ -891,17 +891,36 @@ function getPossibleDuplicates(limit) {
 
 
 function getPendingReviewTransactions_(limit) {
-  return queryExpenses({
-    queryName: "pending_review_transactions",
-    filters: [
-      { field: "status", value: RECORD_STATUS_PENDING_REVIEW }
-    ],
-    orderBy: [],
-    limit: Math.max(1, Number(limit || 5)),
-    selectFields: getExpenseLightSelectFields_()
-  }).map(getFirestoreRecordFromDocument_).filter(function(record) {
-    return record.isActive !== false && isTransactionActiveStatus_(record.status);
+  const safeLimit = Math.max(1, Number(limit || 5));
+  const statuses = [
+    RECORD_STATUS_NEEDS_REVIEW,
+    RECORD_STATUS_PENDING_REVIEW,
+    RECORD_STATUS_PARSE_INCOMPLETE
+  ];
+  const seen = {};
+  const records = [];
+
+  statuses.forEach(function(status) {
+    queryExpenses({
+      queryName: "pending_review_transactions_" + String(status || "").toLowerCase(),
+      filters: [
+        { field: "status", value: status }
+      ],
+      orderBy: [],
+      limit: safeLimit,
+      selectFields: getExpenseLightSelectFields_()
+    }).map(getFirestoreRecordFromDocument_).forEach(function(record) {
+      const docName = String(record && record.documentName || "");
+      if (!docName || seen[docName]) return;
+      if (record.isActive === false || !isTransactionActiveStatus_(record.status)) return;
+      seen[docName] = true;
+      records.push(record);
+    });
   });
+
+  return records.sort(function(a, b) {
+    return String(b.createdAt || b.date || "").localeCompare(String(a.createdAt || a.date || ""));
+  }).slice(0, safeLimit);
 }
 
 

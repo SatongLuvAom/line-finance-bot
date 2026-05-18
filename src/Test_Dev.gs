@@ -35,6 +35,38 @@ function testManualLabor_() {
   };
 }
 
+function testLaborWeekQuickReplyOptions_() {
+  const texts = buildLaborConfirmationQuickReplyTexts_(
+    { options: ["1"] },
+    { needsWeek: true }
+  );
+  return {
+    ok:
+      texts.indexOf("สัปดาห์ที่ 1") !== -1 &&
+      texts.indexOf("สัปดาห์ที่ 5") !== -1 &&
+      parseWeekReply_("W1") === "1" &&
+      parseWeekReply_("สัปดาห์ที่ 3") === "3",
+    quickReplyTexts: texts
+  };
+}
+
+function testReceiptLaborConfirmationPayload_() {
+  const payload = buildReceiptLaborConfirmationPayload_(
+    { userId: "U_TEST" },
+    { category: LABOR_CATEGORY_NAME },
+    { month: "พฤษภาคม" },
+    { needsWeek: true, needsMerchant: false }
+  );
+  return {
+    ok:
+      payload &&
+      payload.type === "receipt_update" &&
+      payload.confirmation.needsWeek === true &&
+      payload.quickReplyTexts.indexOf("สัปดาห์ที่ 5") !== -1,
+    payload: payload
+  };
+}
+
 function testFactoryExpenseNote_() {
   const sample = {
     type: "expense",

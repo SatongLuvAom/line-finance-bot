@@ -55,6 +55,11 @@ function handlePendingLaborConfirmationReply_(event, userText) {
     return true;
   }
 
+  if (pending.type === "receipt_update" || pending.meta && pending.meta.documentName) {
+    confirmPendingReceiptLaborRecord_(event.replyToken, record, pending.meta || {}, event);
+    return true;
+  }
+
   saveReceiptRecord_(event.replyToken, record, pending.meta || {});
   rememberRecentReceiptState_(record, "saved");
   rememberProcessedReceiptMessageId_(pending.meta && pending.meta.sourceMessageId, "saved");
@@ -64,7 +69,7 @@ function handlePendingLaborConfirmationReply_(event, userText) {
 
 function parseWeekReply_(text) {
   const input = String(text || "").trim();
-  const match = input.match(/(?:สัปดาห์ที่|สัปดาห์|week)?\s*([1-5])$/i);
+  const match = input.match(/(?:สัปดาห์ที่|สัปดาห์|week|wk|w)?\s*([1-5])$/i);
   return match ? match[1] : "";
 }
 
@@ -123,13 +128,108 @@ function buildLaborConfirmationQuickReplyTexts_(resolution, state) {
   const safeResolution = resolution || {};
 
   if (safeState.needsWeek) {
-    (safeResolution.options || []).forEach(function(week) {
+    uniqueWeekOptions_((safeResolution.options || []).concat(["1", "2", "3", "4", "5"])).forEach(function(week) {
       texts.push(`สัปดาห์ที่ ${week}`);
     });
   }
 
   texts.push("help");
   return texts;
+}
+
+
+function confirmPendingReceiptLaborRecord_(replyToken, record, meta, event) {
+  const safeMeta = meta || {};
+  const documentName = String(safeMeta.documentName || record && record.documentName || "").trim();
+  const latestDoc = getExpenseDocumentByIdOrName_(documentName);
+  const oldRecord = latestDoc ? getFirestoreRecordFromDocument_(latestDoc) : Object.assign({}, record || {});
+  const nextRecord = Object.assign({}, oldRecord, record || {}, {
+    documentName: latestDoc && latestDoc.name || documentName
+  });
+
+  nextRecord.note = cleanResolvedLaborReviewNote_(nextRecord.note);
+  nextRecord.merchantNeedsConfirmation = false;
+
+  const manualEvaluation = evaluateParsedTransaction(buildManualParsedResultFromRecord_(nextRecord));
+  if (manualEvaluation.status === RECORD_STATUS_IMPORTED) {
+    nextRecord.status = RECORD_STATUS_IMPORTED;
+    nextRecord.parseMethod = PARSE_METHOD_MANUAL;
+    nextRecord.parserConfidence = manualEvaluation.confidence;
+    nextRecord.missingFields = [];
+    nextRecord.warnings = [];
+    nextRecord.rawParserName = "labor_week_quick_reply";
+  } else {
+    nextRecord.status = manualEvaluation.status;
+    nextRecord.missingFields = manualEvaluation.missingFields;
+    nextRecord.warnings = manualEvaluation.warnings;
+  }
+
+  const sheetSyncMode = getSheetSyncMode();
+  nextRecord.sheetSyncStatus = getInitialSheetSyncStatusForMode_(sheetSyncMode);
+  nextRecord.sheetSyncError = "";
+
+  updateFirestoreDocument_(nextRecord);
+  const sheetSync = handleSheetSyncAfterFirestoreSave_(nextRecord.documentName, {
+    target: "labor_week_quick_reply",
+    actorLineUserId: event && event.source && event.source.userId || safeMeta.lineUserId || "",
+    recordStatus: nextRecord.status
+  });
+  logUpdateExpense_(oldRecord, nextRecord, {
+    recordId: nextRecord.documentName,
+    lineUserId: event && event.source && event.source.userId || safeMeta.lineUserId || ""
+  });
+
+  sendLineMessages(replyToken, buildReceiptCompletionMessages_(
+    nextRecord,
+    sheetSync,
+    nextRecord.documentName
+  ));
+}
+
+
+function cleanResolvedLaborReviewNote_(note) {
+  return String(note || "")
+    .split("|")
+    .map(function(part) {
+      return String(part || "").trim();
+    })
+    .filter(function(part) {
+      return part && !/^NEEDS_REVIEW:/i.test(part);
+    })
+    .join(" | ");
+}
+
+
+function buildPendingLaborRecordSnapshot_(record, documentName) {
+  const safeRecord = record || {};
+  return {
+    documentName: String(documentName || safeRecord.documentName || ""),
+    transactionId: String(documentName || safeRecord.transactionId || ""),
+    type: String(safeRecord.type || "expense"),
+    date: String(safeRecord.date || ""),
+    merchant: String(safeRecord.merchant || ""),
+    amount: Number(safeRecord.amount || 0),
+    category: String(safeRecord.category || ""),
+    items: String(safeRecord.items || ""),
+    note: String(safeRecord.note || ""),
+    job: String(safeRecord.job || ""),
+    laborWeek: String(safeRecord.laborWeek || ""),
+    laborMonth: String(safeRecord.laborMonth || ""),
+    source: String(safeRecord.source || RECORD_SOURCE_LINE_BOT),
+    status: String(safeRecord.status || RECORD_STATUS_NEEDS_REVIEW),
+    createdByLineUserId: String(safeRecord.createdByLineUserId || ""),
+    createdByDisplayName: String(safeRecord.createdByDisplayName || ""),
+    createdFromLineMessageId: String(safeRecord.createdFromLineMessageId || ""),
+    storageUrl: String(safeRecord.storageUrl || ""),
+    storagePath: String(safeRecord.storagePath || ""),
+    fileHash: String(safeRecord.fileHash || ""),
+    duplicateStatus: String(safeRecord.duplicateStatus || DUPLICATE_STATUS_UNIQUE),
+    parseMethod: String(safeRecord.parseMethod || ""),
+    aiUsed: safeRecord.aiUsed === true,
+    parserConfidence: Number(safeRecord.parserConfidence || 0),
+    missingFields: normalizeStringList_(safeRecord.missingFields || []),
+    warnings: normalizeStringList_(safeRecord.warnings || [])
+  };
 }
 
 
