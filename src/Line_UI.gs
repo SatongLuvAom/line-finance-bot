@@ -117,7 +117,7 @@ function getLinePushTargetFromSource_(source) {
 function buildQuickReplyFromTexts_(texts) {
   const safeTexts = (texts || [])
     .map(function(text) {
-      return String(text || "").trim();
+      return ensureCommandPrefix_(text);
     })
     .filter(Boolean)
     .slice(0, 13);

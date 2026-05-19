@@ -6,9 +6,22 @@
 function handleTextMessage(event, context) {
   const safeContext = context || {};
   const replyToken = event.replyToken;
-  const userText = String(event.message.text || "").trim();
+  const rawUserText = String(event.message.text || "").trim();
+  const userText = normalizeTextCommandForSource_(event.source, rawUserText);
 
-  logInfo("handleTextMessage.input", { text: userText });
+  if (!userText) {
+    logInfo("handleTextMessage.skip.groupTextWithoutSlash", {
+      sourceType: event && event.source && event.source.type || "",
+      hasGroupId: !!(event && event.source && event.source.groupId),
+      hasRoomId: !!(event && event.source && event.source.roomId)
+    });
+    return;
+  }
+
+  logInfo("handleTextMessage.input", {
+    text: userText,
+    commandPrefixUsed: rawUserText.indexOf("/") === 0
+  });
 
   if (handlePendingLaborConfirmationReply_(event, userText)) {
     return;
@@ -480,9 +493,27 @@ function handleTextMessage(event, context) {
     replyToken,
     [
       "ไม่พบคำสั่งที่ตรงกัน",
-      "พิมพ์ `help` เพื่อดูคำสั่งทั้งหมด"
+      "พิมพ์ `/help` เพื่อดูคำสั่งทั้งหมด"
     ].join("\n")
   );
+}
+
+
+function normalizeTextCommandForSource_(source, text) {
+  const input = String(text || "").trim();
+  if (!input) {
+    return "";
+  }
+
+  if (input.indexOf("/") === 0) {
+    return stripCommandPrefix_(input);
+  }
+
+  if (isGroupOrRoomSource_(source)) {
+    return "";
+  }
+
+  return input;
 }
 
 
@@ -1148,6 +1179,10 @@ function buildHelpMessage_() {
   return [
     "YUPPIE Financial Bot",
     "────────────",
+    "การใช้งานในกลุ่ม: ต้องพิมพ์ / นำหน้าคำสั่ง",
+    "ตัวอย่าง: /help, /สรุปงบ โรงงาน, /รายการล่าสุด",
+    "แชตส่วนตัวใช้มี / หรือไม่มีก็ได้",
+    "",
     "คำสั่งที่ใช้บ่อย",
     "",
     "ส่งสลิป",

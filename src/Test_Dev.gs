@@ -50,6 +50,31 @@ function testLaborWeekQuickReplyOptions_() {
   };
 }
 
+
+function testGroupSlashCommandGuard_() {
+  return {
+    ok:
+      normalizeTextCommandForSource_({ type: "group", groupId: "G_TEST" }, "help") === "" &&
+      normalizeTextCommandForSource_({ type: "group", groupId: "G_TEST" }, "/help") === "help" &&
+      normalizeTextCommandForSource_({ type: "room", roomId: "R_TEST" }, "/สรุปงบ โรงงาน") === "สรุปงบ โรงงาน" &&
+      normalizeTextCommandForSource_({ type: "user", userId: "U_TEST" }, "help") === "help" &&
+      normalizeTextCommandForSource_({ type: "user", userId: "U_TEST" }, "/help") === "help"
+  };
+}
+
+
+function testQuickReplySlashPrefix_() {
+  const quickReply = buildQuickReplyFromTexts_(["help", "/รายการล่าสุด"]);
+  const items = quickReply && quickReply.items || [];
+  return {
+    ok:
+      items.length === 2 &&
+      items[0].action.text === "/help" &&
+      items[1].action.text === "/รายการล่าสุด",
+    quickReply: quickReply
+  };
+}
+
 function testReceiptLaborConfirmationPayload_() {
   const payload = buildReceiptLaborConfirmationPayload_(
     { userId: "U_TEST" },

@@ -64,3 +64,26 @@ function truncateText_(text, maxLength) {
 }
 
 
+function stripCommandPrefix_(text) {
+  return String(text || "").replace(/^\/+/, "").trim();
+}
+
+
+function ensureCommandPrefix_(text) {
+  const input = String(text || "").trim();
+  if (!input) return "";
+  return input.indexOf("/") === 0 ? input : "/" + input;
+}
+
+
+function isGroupOrRoomSource_(source) {
+  const safeSource = source || {};
+  return !!(
+    safeSource.groupId ||
+    safeSource.roomId ||
+    safeSource.type === "group" ||
+    safeSource.type === "room"
+  );
+}
+
+

@@ -532,6 +532,7 @@ function buildTopCategoryBox_(categoryMap) {
 
 
 function buildMessageButton_(label, text, style) {
+  const commandText = ensureCommandPrefix_(String(text || label || "-"));
   return {
     type: "button",
     style: style || "secondary",
@@ -539,7 +540,7 @@ function buildMessageButton_(label, text, style) {
     action: {
       type: "message",
       label: truncateText_(String(label || "-"), 20),
-      text: truncateText_(String(text || label || "-"), 300)
+      text: truncateText_(commandText, 300)
     }
   };
 }
@@ -557,7 +558,7 @@ function withQuickReply_(message, quickReplyTexts) {
 
 function buildQuickReplyFromActions_(texts) {
   const items = (texts || []).slice(0, 13).map(function(text) {
-    const value = String(text || "").trim();
+    const value = ensureCommandPrefix_(text);
     if (!value) return null;
     return {
       type: "action",
