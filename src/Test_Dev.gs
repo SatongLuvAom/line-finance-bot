@@ -1126,11 +1126,28 @@ function testErrorCardNoSecret_() {
 
 function testReceiptSavedFlexCard_() {
   const message = buildReceiptSavedFlexCard(mockReceiptNotificationRecord_(RECORD_STATUS_IMPORTED));
+  const json = JSON.stringify(message);
   return {
     ok:
       message.type === "flex" &&
-      JSON.stringify(message).indexOf("บันทึกสลิปเรียบร้อยแล้ว") !== -1,
+      json.indexOf("บันทึกสลิปเรียบร้อยแล้ว") !== -1 &&
+      json.indexOf("EXP-20260512-8F3A2") !== -1,
     messageType: message.type
+  };
+}
+
+
+function testTransactionReferenceCode_() {
+  return {
+    ok:
+      buildShortTransactionReference_(mockReceiptNotificationRecord_(RECORD_STATUS_IMPORTED)) === "EXP-20260512-8F3A2" &&
+      buildShortTransactionReference_(Object.assign(mockReceiptNotificationRecord_(RECORD_STATUS_IMPORTED), {
+        category: LABOR_CATEGORY_NAME
+      })) === "LAB-20260512-8F3A2" &&
+      buildShortTransactionReference_(Object.assign(mockReceiptNotificationRecord_(RECORD_STATUS_IMPORTED), {
+        type: "income",
+        category: "ค่างวดงาน"
+      })) === "INC-20260512-8F3A2"
   };
 }
 
@@ -1258,6 +1275,7 @@ function mockReceiptNotificationRecord_(status) {
   return {
     type: "expense",
     date: "2026-05-12",
+    documentName: "projects/yuppie/databases/(default)/documents/expenses/txn_8f3a2",
     merchant: "ร้านทดสอบ",
     amount: 1200,
     category: "วัสดุโครงสร้าง",

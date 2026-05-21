@@ -270,7 +270,8 @@ function getReceiptTransactionTypeLabel_(record) {
 
 function buildShortTransactionReference_(record) {
   const safeRecord = record || {};
-  const type = String(safeRecord.type || "expense") === "income" ? "INC" : "EXP";
+  const type = getTransactionReferenceType_(safeRecord);
+  const dateKey = getTransactionReferenceDateKey_(safeRecord);
   const rawId = String(
     safeRecord.shortReference ||
     safeRecord.transactionId ||
@@ -284,7 +285,40 @@ function buildShortTransactionReference_(record) {
   const compactId = documentId.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
   if (!compactId) return "";
 
-  return type + "-" + compactId.slice(-5);
+  return [type, dateKey, compactId.slice(-5)].filter(Boolean).join("-");
+}
+
+
+function getTransactionReferenceType_(record) {
+  const safeRecord = record || {};
+  if (String(safeRecord.category || safeRecord.categoryName || "") === LABOR_CATEGORY_NAME) {
+    return "LAB";
+  }
+  return String(safeRecord.type || "expense") === "income" ? "INC" : "EXP";
+}
+
+
+function getTransactionReferenceDateKey_(record) {
+  const safeRecord = record || {};
+  const rawDate = String(
+    safeRecord.date ||
+    safeRecord.occurredAt ||
+    safeRecord.dateKey ||
+    safeRecord.createdAt ||
+    ""
+  ).trim();
+  if (!rawDate) return "";
+
+  const ymdMatch = rawDate.match(/(\d{4})-?(\d{2})-?(\d{2})/);
+  if (ymdMatch) {
+    return ymdMatch[1] + ymdMatch[2] + ymdMatch[3];
+  }
+
+  const parsed = new Date(rawDate);
+  if (isNaN(parsed.getTime())) {
+    return "";
+  }
+  return formatDateToYMD(parsed).replace(/-/g, "");
 }
 
 
